@@ -42,7 +42,7 @@ export default function EndpointPanel() {
       <CopyRow label="Models" value={`${base}/models`} />
       <CopyRow label="Image Generations" value={`${base}/images/generations`} />
       <div className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1 mt-3">Anthropic 规范</div>
-      <CopyRow label="Anthropic Base URL (base_url)" value={`${window.location.origin}/functions`} />
+      <CopyRow label="Anthropic Base URL (base_url)" value={base} />
       <CopyRow label="Messages" value={`${base}/messages`} />
     </div>
   );
