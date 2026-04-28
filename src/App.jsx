@@ -5,8 +5,16 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import { Navigate, useParams } from 'react-router-dom';
 // Add page imports here
 import ApiKeysPage from './pages/ApiKeys';
+
+// Redirect /v1/* to /functions/v1/*
+function V1Redirect() {
+  const path = window.location.pathname.replace(/^\/v1/, '/functions/v1') + window.location.search;
+  window.location.replace(path);
+  return null;
+}
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -37,6 +45,7 @@ const AuthenticatedApp = () => {
       {/* Add your page Route elements here */}
       <Route path="/" element={<ApiKeysPage />} />
       <Route path="/apikeys" element={<ApiKeysPage />} />
+      <Route path="/v1/*" element={<V1Redirect />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
