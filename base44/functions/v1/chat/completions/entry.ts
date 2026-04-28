@@ -120,6 +120,28 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Detect real function calling tools (not web search tools)
+    const webSearchToolNames = new Set(['web_search', 'google_search', 'bing_search']);
+    const hasFunctionCallingTools = Array.isArray(tools) && tools.some(t =>
+      t.type === 'function' && t.function?.name && !webSearchToolNames.has(t.function.name)
+    );
+
+    // If request has real tools, forward directly to upstream (Base44 LLM doesn't support function calling)
+    if (hasFunctionCallingTools) {
+      const upstreams = await base44.asServiceRole.entities.Config.filter({ type: 'upstream', enabled: true });
+      const upstream = upstreams[0];
+      if (upstream && upstream.endpoint && upstream.apiKey) {
+        const upstreamRes = await fetch(`${upstream.endpoint.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${upstream.apiKey}` },
+          body: JSON.stringify({ ...body, model: upstream.model || body.model }),
+        });
+        const upstreamBody = await upstreamRes.text();
+        return new Response(upstreamBody, { status: upstreamRes.status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+      }
+      return Response.json({ error: { message: 'Function calling requires an upstream API to be configured', type: 'not_supported' } }, { status: 501, headers: CORS });
+    }
+
     const webSearchEnabled = web_search || enable_search || searchSuffix ||
       (Array.isArray(tools) && tools.some(t =>
         t.type === 'web_search' || t.type === 'web_search_preview' || t.type === 'google_search' ||
