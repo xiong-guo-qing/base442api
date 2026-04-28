@@ -46,6 +46,7 @@ const AuthenticatedApp = () => {
       <Route path="/" element={<ApiKeysPage />} />
       <Route path="/apikeys" element={<ApiKeysPage />} />
       <Route path="/v1/*" element={<V1Redirect />} />
+      <Route path="/messages" element={<V1Redirect />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
