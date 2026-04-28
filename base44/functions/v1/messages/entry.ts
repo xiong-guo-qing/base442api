@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Detect real function calling tools — forward to upstream if present
+    // If tools are present, try upstream first, otherwise fall through to Base44 LLM (ignoring tools)
     const hasFunctionCallingTools = Array.isArray(tools) && tools.length > 0;
     if (hasFunctionCallingTools) {
       const upstreams = await base44.asServiceRole.entities.Config.filter({ type: 'upstream', enabled: true });
@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
         const upstreamBody = await upstreamRes.text();
         return new Response(upstreamBody, { status: upstreamRes.status, headers: { ...CORS, 'Content-Type': 'application/json' } });
       }
-      return Response.json({ type: 'error', error: { type: 'not_supported_error', message: 'Tool use requires an upstream API to be configured' } }, { status: 501, headers: CORS });
+      // No upstream configured — fall through to Base44 LLM, ignoring tools
     }
 
     const prompt = buildPrompt(system, messages);
