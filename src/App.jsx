@@ -35,6 +35,8 @@ const AuthenticatedApp = () => {
   return (
     <Routes>
       {/* Add your page Route elements here */}
+      <Route path="/" element={<ApiKeysPage />} />
+      <Route path="/apikeys" element={<ApiKeysPage />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
