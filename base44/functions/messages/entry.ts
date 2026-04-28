@@ -87,6 +87,7 @@ Deno.serve(async (req) => {
       max_tokens = 1024,
       stream = false,
       thinking,
+      tools,
     } = body;
 
     // Resolve model
@@ -97,6 +98,27 @@ Deno.serve(async (req) => {
       if (internalModel.startsWith('claude')) {
         internalModel = 'claude_opus_4_7';
       }
+    }
+
+    // Detect tool use — forward to upstream if present
+    const hasFunctionCallingTools = Array.isArray(tools) && tools.length > 0;
+    if (hasFunctionCallingTools) {
+      const upstreams = await base44.asServiceRole.entities.Config.filter({ type: 'upstream', enabled: true });
+      const upstream = upstreams[0];
+      if (upstream && upstream.endpoint && upstream.apiKey) {
+        const upstreamRes = await fetch(`${upstream.endpoint.replace(/\/$/, '')}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': upstream.apiKey,
+            'anthropic-version': req.headers.get('anthropic-version') || '2023-06-01',
+          },
+          body: JSON.stringify({ ...body, model: upstream.model || body.model }),
+        });
+        const upstreamBody = await upstreamRes.text();
+        return new Response(upstreamBody, { status: upstreamRes.status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+      }
+      return Response.json({ type: 'error', error: { type: 'not_supported_error', message: 'Tool use requires an upstream API to be configured' } }, { status: 501, headers: CORS });
     }
 
     const prompt = buildPrompt(system, messages);
