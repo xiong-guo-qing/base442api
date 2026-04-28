@@ -131,8 +131,8 @@ Deno.serve(async (req) => {
     }
 
     const skipCache = no_cache || cache === false ||
-      (temperature !== undefined && temperature > 0.3) ||
-      (top_p !== undefined && top_p < 0.9);
+      (temperature !== undefined && temperature > 0.8) ||
+      (top_p !== undefined && top_p < 0.5);
 
     let cacheKey = null;
     if (!skipCache) {
