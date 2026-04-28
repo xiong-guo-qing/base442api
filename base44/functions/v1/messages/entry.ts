@@ -39,15 +39,61 @@ function estimateTokens(text) {
 
 function buildPrompt(system, messages) {
   const parts = [];
-  if (system) parts.push(`SYSTEM: ${system}`);
+  if (system) {
+    const sysText = typeof system === 'string' ? system :
+      Array.isArray(system) ? system.map(s => s.text || '').join('\n') : String(system);
+    parts.push(`SYSTEM: ${sysText}`);
+  }
   for (const m of messages) {
     const role = m.role === 'assistant' ? 'ASSISTANT' : 'HUMAN';
-    const content = typeof m.content === 'string' ? m.content :
-      Array.isArray(m.content) ? m.content.map(c => c.type === 'text' ? c.text : '').join('\n') : String(m.content || '');
+    let content = '';
+    if (typeof m.content === 'string') {
+      content = m.content;
+    } else if (Array.isArray(m.content)) {
+      content = m.content.map(c => {
+        if (c.type === 'text') return c.text || '';
+        if (c.type === 'tool_use') return `[tool_call id=${c.id} name=${c.name} args=${JSON.stringify(c.input || {})}]`;
+        if (c.type === 'tool_result') {
+          const t = typeof c.content === 'string' ? c.content :
+            Array.isArray(c.content) ? c.content.map(x => x.text || '').join('\n') : JSON.stringify(c.content || '');
+          return `[tool_result id=${c.tool_use_id || ''}]\n${t}`;
+        }
+        return '';
+      }).filter(Boolean).join('\n');
+    } else {
+      content = String(m.content || '');
+    }
     parts.push(`${role}: ${content}`);
   }
   return parts.join('\n\n');
 }
+
+function buildToolsSystemPrompt(tools) {
+  const list = tools.map(t =>
+    `- ${t.name}: ${t.description || ''}\n  parameters: ${JSON.stringify(t.input_schema || {})}`
+  ).join('\n');
+  return `You have access to the following tools. To call a tool, respond with JSON matching the response schema with action="tool_calls" and a list of calls. Otherwise use action="message" with your final answer.\n\nAvailable tools:\n${list}`;
+}
+
+const TOOL_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['message', 'tool_calls'] },
+    content: { type: 'string', description: 'Final answer text when action=message' },
+    tool_calls: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          arguments: { type: 'object' }
+        },
+        required: ['name', 'arguments']
+      }
+    }
+  },
+  required: ['action']
+};
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -93,7 +139,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // If tools are present, try upstream first, otherwise fall through to Base44 LLM (ignoring tools)
+    // If tools are present, try upstream first, otherwise emulate via Base44 LLM
     const hasFunctionCallingTools = Array.isArray(tools) && tools.length > 0;
     if (hasFunctionCallingTools) {
       const upstreams = await base44.asServiceRole.entities.Config.filter({ type: 'upstream', enabled: true });
@@ -111,7 +157,118 @@ Deno.serve(async (req) => {
         const upstreamBody = await upstreamRes.text();
         return new Response(upstreamBody, { status: upstreamRes.status, headers: { ...CORS, 'Content-Type': 'application/json' } });
       }
-      // No upstream configured — fall through to Base44 LLM, ignoring tools
+
+      // Emulate tool use via Base44 LLM with structured JSON output
+      const sysPrompt = buildToolsSystemPrompt(tools);
+      const convo = buildPrompt(system, messages);
+      const fullPrompt = `${sysPrompt}\n\n---\n\n${convo}\n\nASSISTANT:`;
+
+      let parsed;
+      try {
+        const r = await base44.asServiceRole.integrations.Core.InvokeLLM({
+          prompt: fullPrompt,
+          model: internalModel,
+          response_json_schema: TOOL_RESPONSE_SCHEMA,
+        });
+        parsed = typeof r === 'string' ? JSON.parse(r) : r;
+      } catch (err) {
+        return Response.json(
+          { type: 'error', error: { type: 'api_error', message: `Tool emulation failed: ${err.message}` } },
+          { status: 500, headers: CORS }
+        );
+      }
+
+      const msgId = makeId('msg');
+      const inputTokens = estimateTokens(fullPrompt);
+
+      if (parsed.action === 'tool_calls' && Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+        const blocks = parsed.tool_calls.map((tc, i) => ({
+          type: 'tool_use',
+          id: `toolu_${makeId('id').slice(3)}_${i}`,
+          name: tc.name,
+          input: tc.arguments || {},
+        }));
+        const outputTokens = estimateTokens(JSON.stringify(blocks));
+
+        try {
+          await base44.asServiceRole.entities.UsageStats.create({
+            api_key_id: keyRecord.id, model: internalModel,
+            prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (_) {}
+
+        if (stream) {
+          const encoder = new TextEncoder();
+          const readable = new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({
+                type: 'message_start',
+                message: { id: msgId, type: 'message', role: 'assistant', content: [], model: requestedModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: inputTokens, output_tokens: 0 } }
+              })}\n\n`));
+
+              for (let idx = 0; idx < blocks.length; idx++) {
+                const b = blocks[idx];
+                controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: idx, content_block: { type: 'tool_use', id: b.id, name: b.name, input: {} } })}\n\n`));
+                controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: idx, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input) } })}\n\n`));
+                controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: idx })}\n\n`));
+              }
+
+              controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: outputTokens } })}\n\n`));
+              controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+              controller.close();
+            }
+          });
+          return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+        }
+
+        return Response.json({
+          id: msgId, type: 'message', role: 'assistant',
+          content: blocks, model: requestedModel,
+          stop_reason: 'tool_use', stop_sequence: null,
+          usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+        }, { headers: CORS });
+      }
+
+      // action === 'message'
+      const finalText = parsed.content || '';
+      const outputTokens = estimateTokens(finalText);
+      try {
+        await base44.asServiceRole.entities.UsageStats.create({
+          api_key_id: keyRecord.id, model: internalModel,
+          prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (_) {}
+
+      if (stream) {
+        const encoder = new TextEncoder();
+        const chars = Array.from(finalText);
+        const chunkSize = Math.max(3, Math.ceil(chars.length / 60) || 1);
+        const readable = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: requestedModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: inputTokens, output_tokens: 0 } } })}\n\n`));
+            controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n`));
+            for (let i = 0; i < chars.length; i += chunkSize) {
+              const chunk = chars.slice(i, i + chunkSize).join('');
+              controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } })}\n\n`));
+              await new Promise(r => setTimeout(r, 10));
+            }
+            controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`));
+            controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: outputTokens } })}\n\n`));
+            controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+            controller.close();
+          }
+        });
+        return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+      }
+
+      return Response.json({
+        id: msgId, type: 'message', role: 'assistant',
+        content: [{ type: 'text', text: finalText }],
+        model: requestedModel, stop_reason: 'end_turn', stop_sequence: null,
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      }, { headers: CORS });
     }
 
     const prompt = buildPrompt(system, messages);
