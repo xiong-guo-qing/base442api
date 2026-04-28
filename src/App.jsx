@@ -11,8 +11,11 @@ import ApiKeysPage from './pages/ApiKeys';
 
 // Redirect /v1/* to /functions/v1/*
 function V1Redirect() {
-  const path = window.location.pathname.replace(/^\/v1/, '/functions/v1') + window.location.search;
-  window.location.replace(path);
+  const pathname = window.location.pathname;
+  const path = pathname.startsWith('/v1')
+    ? pathname.replace(/^\/v1/, '/functions/v1')
+    : '/functions/v1' + pathname;
+  window.location.replace(path + window.location.search);
   return null;
 }
 

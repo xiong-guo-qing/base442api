@@ -36,10 +36,14 @@ export default function EndpointPanel() {
         <h2 className="text-sm font-semibold text-slate-200">API 端点</h2>
         <span className="text-xs text-slate-500 ml-auto">⚠️ 必须使用 /functions/v1 前缀</span>
       </div>
-      <CopyRow label="OpenAI Base URL (SDK base_url)" value={base} />
+      <div className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1 mt-1">OpenAI 规范</div>
+      <CopyRow label="Base URL (SDK base_url)" value={base} />
       <CopyRow label="Chat Completions" value={`${base}/chat/completions`} />
       <CopyRow label="Models" value={`${base}/models`} />
       <CopyRow label="Image Generations" value={`${base}/images/generations`} />
+      <div className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1 mt-3">Anthropic 规范</div>
+      <CopyRow label="Anthropic Base URL (base_url)" value={`${window.location.origin}/functions`} />
+      <CopyRow label="Messages" value={`${base}/messages`} />
     </div>
   );
 }
