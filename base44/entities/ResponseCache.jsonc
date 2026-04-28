@@ -1,0 +1,41 @@
+{
+  "name": "ResponseCache",
+  "type": "object",
+  "properties": {
+    "cache_key": {
+      "type": "string",
+      "description": "SHA-256 hex of request"
+    },
+    "model": {
+      "type": "string"
+    },
+    "content": {
+      "type": "string",
+      "description": "Cached response content"
+    },
+    "prompt_tokens": {
+      "type": "number",
+      "default": 0
+    },
+    "completion_tokens": {
+      "type": "number",
+      "default": 0
+    },
+    "total_tokens": {
+      "type": "number",
+      "default": 0
+    },
+    "hits": {
+      "type": "number",
+      "default": 0
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "cache_key",
+    "content"
+  ]
+}

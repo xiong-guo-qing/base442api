@@ -1,0 +1,22 @@
+{
+  "name": "APIKey",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "description": "The API key string"
+    },
+    "name": {
+      "type": "string",
+      "description": "A friendly name for this key"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this key is active"
+    }
+  },
+  "required": [
+    "key"
+  ]
+}

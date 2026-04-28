@@ -1,0 +1,37 @@
+{
+  "name": "Config",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "admin_pass",
+        "upstream"
+      ],
+      "description": "Config type"
+    },
+    "value": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "apiKey": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "type"
+  ]
+}
