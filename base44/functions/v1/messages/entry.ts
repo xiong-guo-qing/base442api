@@ -54,7 +54,6 @@ Deno.serve(async (req) => {
 
   try {
     const base44 = createClientFromRequest(req);
-
     const apiKey =
       req.headers.get('x-api-key') ||
       (req.headers.get('Authorization') || '').replace('Bearer ', '').trim();

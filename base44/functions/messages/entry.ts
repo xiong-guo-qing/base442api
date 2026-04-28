@@ -56,7 +56,6 @@ Deno.serve(async (req) => {
 
   try {
     const base44 = createClientFromRequest(req);
-
     // Anthropic uses x-api-key header; also support Bearer
     const apiKey =
       req.headers.get('x-api-key') ||
