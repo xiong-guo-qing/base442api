@@ -37,6 +37,11 @@ function estimateTokens(text) {
   return Math.ceil((text || '').length / 4);
 }
 
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function buildPrompt(system, messages) {
   const parts = [];
   if (system) {
@@ -273,11 +278,62 @@ Deno.serve(async (req) => {
 
     const prompt = buildPrompt(system, messages);
 
+    // Cache lookup (only for non-tool requests)
+    const cacheKey = await sha256(JSON.stringify({ model: internalModel, system: system || null, messages }));
+    const cached = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: cacheKey });
+    if (cached && cached.length > 0) {
+      const entry = cached[0];
+      if (!entry.expires_at || new Date(entry.expires_at) > new Date()) {
+        await base44.asServiceRole.entities.ResponseCache.update(entry.id, { hits: (entry.hits || 0) + 1 });
+        const cachedContent = entry.content;
+        const cachedIn = entry.prompt_tokens || 0;
+        const cachedOut = entry.completion_tokens || 0;
+        const cMsgId = makeId('msg');
+
+        if (stream) {
+          const encoder = new TextEncoder();
+          const chars = Array.from(cachedContent);
+          const chunkSize = Math.max(5, Math.ceil(chars.length / 20));
+          const readable = new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: cMsgId, type: 'message', role: 'assistant', content: [], model: requestedModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: cachedIn, output_tokens: 0 } } })}\n\n`));
+              controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n`));
+              for (let i = 0; i < chars.length; i += chunkSize) {
+                const chunk = chars.slice(i, i + chunkSize).join('');
+                controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } })}\n\n`));
+                await new Promise(r => setTimeout(r, 25));
+              }
+              controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`));
+              controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: cachedOut } })}\n\n`));
+              controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+              controller.close();
+            }
+          });
+          return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+        }
+
+        return Response.json({
+          id: cMsgId, type: 'message', role: 'assistant',
+          content: [{ type: 'text', text: cachedContent }],
+          model: requestedModel, stop_reason: 'end_turn', stop_sequence: null,
+          usage: { input_tokens: cachedIn, output_tokens: cachedOut },
+        }, { headers: CORS });
+      }
+    }
+
     const result = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt, model: internalModel });
     const content = typeof result === 'string' ? result : JSON.stringify(result);
 
     const inputTokens = estimateTokens(prompt);
     const outputTokens = estimateTokens(content);
+
+    try {
+      await base44.asServiceRole.entities.ResponseCache.create({
+        cache_key: cacheKey, model: internalModel, content,
+        prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+        hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      });
+    } catch (_) {}
 
     try {
       await base44.asServiceRole.entities.UsageStats.create({
