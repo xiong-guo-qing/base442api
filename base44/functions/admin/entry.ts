@@ -182,9 +182,13 @@ Deno.serve(async (req) => {
 
     case 'cachedashboard': {
       // Aggregate data for the cache dashboard
-      const caches = await base44.asServiceRole.entities.ResponseCache.list('-hits', 500);
-      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 500);
-      const keys = await base44.asServiceRole.entities.APIKey.list('-created_date', 200);
+      const rawCaches = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
+      const rawStats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 500);
+      const rawKeys = await base44.asServiceRole.entities.APIKey.list('-created_date', 200);
+      const unwrap = (record) => ({ ...record, ...(record.data || {}) });
+      const caches = (rawCaches || []).map(unwrap).sort((a, b) => (b.hits || 0) - (a.hits || 0));
+      const stats = (rawStats || []).map(unwrap);
+      const keys = (rawKeys || []).map(unwrap);
 
       const totalEntries = caches.length;
       const totalHits = caches.reduce((s, c) => s + (c.hits || 0), 0);
@@ -196,7 +200,7 @@ Deno.serve(async (req) => {
       const byModel = {};
       for (const c of caches) {
         if (!c.hits) continue;
-        byModel[c.model] = (byModel[c.model] || 0) + c.hits;
+        byModel[c.model || 'unknown'] = (byModel[c.model || 'unknown'] || 0) + c.hits;
       }
       const modelData = Object.entries(byModel).map(([model, hits]) => ({ model, hits }));
 

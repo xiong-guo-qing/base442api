@@ -40,7 +40,7 @@ export default function CacheDashboardTab({ adminToken }) {
         body: JSON.stringify({ action: 'cachedashboard', adminToken }),
       });
       const json = await res.json();
-      setData(json);
+      setData(json.summary ? json : { error: json.error?.message || '缓存数据加载失败' });
     } finally {
       setLoading(false);
     }
@@ -53,7 +53,7 @@ export default function CacheDashboardTab({ adminToken }) {
   }
 
   if (!data || !data.summary) {
-    return <div className="text-center py-12 text-slate-500">暂无数据</div>;
+    return <div className="text-center py-12 text-slate-500">{data?.error || '暂无数据'}</div>;
   }
 
   const { summary, byModel, byKey, top10 } = data;
