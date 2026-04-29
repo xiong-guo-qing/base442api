@@ -8,6 +8,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { Navigate, useParams } from 'react-router-dom';
 // Add page imports here
 import ApiKeysPage from './pages/ApiKeys';
+import Chat from './pages/Chat';
 
 // Redirect /v1/* to /functions/v1/*
 function V1Redirect() {
@@ -48,6 +49,7 @@ const AuthenticatedApp = () => {
       {/* Add your page Route elements here */}
       <Route path="/" element={<ApiKeysPage />} />
       <Route path="/apikeys" element={<ApiKeysPage />} />
+      <Route path="/chat" element={<Chat />} />
       <Route path="/v1/*" element={<V1Redirect />} />
       <Route path="/messages" element={<V1Redirect />} />
       <Route path="*" element={<PageNotFound />} />
