@@ -235,6 +235,81 @@ Deno.serve(async (req) => {
       return jsonRes({ success: true, deleted: allCaches.length });
     }
 
+    case 'cachetrends': {
+      const { days = 7 } = body;
+      const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+      const sinceIso = since.toISOString();
+
+      const caches = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
+      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 500);
+
+      // Daily series: cache entries created per day, requests per day, hit-rate per day
+      const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
+      const days_arr = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 24 * 3600 * 1000);
+        days_arr.push(dayKey(d));
+      }
+
+      const cacheByDay = {};
+      const requestByDay = {};
+      const hitsByDay = {};
+      for (const d of days_arr) {
+        cacheByDay[d] = 0;
+        requestByDay[d] = 0;
+        hitsByDay[d] = 0;
+      }
+
+      for (const c of caches) {
+        if (!c.created_date) continue;
+        if (new Date(c.created_date) < since) continue;
+        const k = dayKey(c.created_date);
+        if (k in cacheByDay) {
+          cacheByDay[k]++;
+          hitsByDay[k] += (c.hits || 0);
+        }
+      }
+      for (const s of stats) {
+        if (!s.created_date) continue;
+        if (new Date(s.created_date) < since) continue;
+        const k = dayKey(s.created_date);
+        if (k in requestByDay) requestByDay[k]++;
+      }
+
+      const daily = days_arr.map(d => {
+        const newCache = cacheByDay[d];
+        const requests = requestByDay[d];
+        const hits = hitsByDay[d];
+        const total = hits + requests;
+        const hitRate = total > 0 ? hits / total : 0;
+        return {
+          date: d.slice(5), // MM-DD
+          newCache,
+          requests,
+          hits,
+          hitRate: Number((hitRate * 100).toFixed(1)),
+        };
+      });
+
+      // Storage by model: total content size (chars) per model
+      const sizeByModel = {};
+      const entriesByModel = {};
+      for (const c of caches) {
+        const m = c.model || 'unknown';
+        const size = (c.content || '').length;
+        sizeByModel[m] = (sizeByModel[m] || 0) + size;
+        entriesByModel[m] = (entriesByModel[m] || 0) + 1;
+      }
+      const storage = Object.entries(sizeByModel).map(([model, bytes]) => ({
+        model,
+        bytes,
+        kb: Number((bytes / 1024).toFixed(2)),
+        entries: entriesByModel[model],
+      })).sort((a, b) => b.bytes - a.bytes);
+
+      return jsonRes({ daily, storage, sinceIso, days });
+    }
+
     case 'cachemodels': {
       const all = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
       const models = [...new Set(all.map(c => c.model).filter(Boolean))];

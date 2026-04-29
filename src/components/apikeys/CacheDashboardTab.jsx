@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Database, Zap, TrendingUp, RefreshCw, Coins } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import CacheFilterClear from './CacheFilterClear';
+import CacheTrendsCharts from './CacheTrendsCharts';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
 
@@ -78,6 +79,9 @@ export default function CacheDashboardTab({ adminToken }) {
         <StatCard icon={Zap} label="总命中次数" value={summary.totalHits} sublabel={`共 ${summary.totalRequests} 个请求`} color="green" />
         <StatCard icon={Coins} label="节省 Token" value={summary.savedTokens.toLocaleString()} sublabel="估算值" color="amber" />
       </div>
+
+      {/* Trends charts */}
+      <CacheTrendsCharts adminToken={adminToken} />
 
       {/* Charts row */}
       <div className="grid md:grid-cols-2 gap-4">
