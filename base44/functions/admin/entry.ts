@@ -348,6 +348,52 @@ Deno.serve(async (req) => {
       });
     }
 
+    case 'warmuplist': {
+      const items = await base44.asServiceRole.entities.CacheWarmupTemplate.list('-updated_date', 200);
+      return jsonRes({ items });
+    }
+
+    case 'warmupcreate': {
+      const { name, prompt, model, system, ttl_hours, enabled } = body;
+      if (!name || !prompt) return errRes('name and prompt are required');
+      const item = await base44.asServiceRole.entities.CacheWarmupTemplate.create({
+        name,
+        prompt,
+        model: model || 'gpt_5_mini',
+        system: system || '',
+        ttl_hours: ttl_hours ?? 1,
+        enabled: enabled !== false,
+        total_runs: 0,
+      });
+      return jsonRes({ item });
+    }
+
+    case 'warmupupdate': {
+      const { templateId, ...updates } = body;
+      if (!templateId) return errRes('templateId required');
+      delete updates.action; delete updates.adminToken;
+      const item = await base44.asServiceRole.entities.CacheWarmupTemplate.update(templateId, updates);
+      return jsonRes({ item });
+    }
+
+    case 'warmupdelete': {
+      const { templateId } = body;
+      if (!templateId) return errRes('templateId required');
+      await base44.asServiceRole.entities.CacheWarmupTemplate.delete(templateId);
+      return jsonRes({ success: true });
+    }
+
+    case 'warmuprun': {
+      const { templateId } = body;
+      const res = await fetch(`${new URL(req.url).origin}/functions/warmupCache`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': req.headers.get('Authorization') || '' },
+        body: JSON.stringify(templateId ? { templateId } : {}),
+      });
+      const json = await res.json();
+      return jsonRes(json);
+    }
+
     case 'cachemodels': {
       const all = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
       const models = [...new Set(all.map(c => c.model).filter(Boolean))];

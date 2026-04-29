@@ -1,0 +1,55 @@
+{
+  "name": "CacheWarmupTemplate",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Friendly name for the template"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "The prompt text to pre-generate and cache"
+    },
+    "model": {
+      "type": "string",
+      "default": "gpt_5_mini",
+      "description": "Internal Base44 model name to use"
+    },
+    "system": {
+      "type": "string",
+      "description": "Optional system instruction"
+    },
+    "ttl_hours": {
+      "type": "number",
+      "default": 1,
+      "description": "Cache TTL in hours after warmup"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "last_run_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_run_status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "error",
+        "skipped"
+      ]
+    },
+    "last_error": {
+      "type": "string"
+    },
+    "total_runs": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "name",
+    "prompt"
+  ]
+}
