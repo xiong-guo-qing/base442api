@@ -32,6 +32,22 @@
     "expires_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "embedding": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "Lightweight semantic vector of last user message (256-dim, sparse)"
+    },
+    "last_user_text": {
+      "type": "string",
+      "description": "Last user message text used for semantic matching"
+    },
+    "is_single_turn": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the request was single-turn (eligible for semantic match)"
     }
   },
   "required": [

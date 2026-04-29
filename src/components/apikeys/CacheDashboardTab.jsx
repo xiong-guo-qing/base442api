@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Database, Zap, TrendingUp, RefreshCw, Coins } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import CacheFilterClear from './CacheFilterClear';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
 
@@ -114,6 +115,9 @@ export default function CacheDashboardTab({ adminToken }) {
           )}
         </div>
       </div>
+
+      {/* Filter & batch clear */}
+      <CacheFilterClear adminToken={adminToken} onCleared={load} />
 
       {/* Top 10 entries */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">

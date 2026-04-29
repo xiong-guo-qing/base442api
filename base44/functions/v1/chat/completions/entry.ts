@@ -50,6 +50,55 @@ function estimateTokens(text) {
   return Math.ceil((text || '').length / 4);
 }
 
+// --- Lightweight semantic embedding (local, deterministic) ---
+// Builds a 256-dim sparse vector from char n-grams (n=3) + token unigrams,
+// with simple stopword filtering. Good enough for "is this paraphrase?" matching.
+const EMBED_DIM = 256;
+const STOPWORDS = new Set(['the','a','an','is','are','was','were','of','to','in','on','at','for','and','or','but','i','you','it','this','that','please','can','could','would','will','do','does','did','have','has','had','be','been','am','my','your','我','你','的','了','是','吗','啊','请','帮','给','把','一','在','和','或','也','都','就','要','要','不','没','有','吧']);
+function embedText(text) {
+  const v = new Float32Array(EMBED_DIM);
+  if (!text) return Array.from(v);
+  const lower = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  // Token unigrams
+  for (const tok of lower.split(/[^a-z0-9\u4e00-\u9fff]+/)) {
+    if (!tok || STOPWORDS.has(tok) || tok.length < 2) continue;
+    let h = 5381;
+    for (let i = 0; i < tok.length; i++) h = ((h << 5) + h + tok.charCodeAt(i)) | 0;
+    v[Math.abs(h) % EMBED_DIM] += 1;
+  }
+  // Char trigrams
+  const s = ' ' + lower + ' ';
+  for (let i = 0; i < s.length - 2; i++) {
+    const tri = s.slice(i, i + 3);
+    let h = 5381;
+    for (let j = 0; j < 3; j++) h = ((h << 5) + h + tri.charCodeAt(j)) | 0;
+    v[Math.abs(h) % EMBED_DIM] += 0.5;
+  }
+  // L2 normalize
+  let norm = 0;
+  for (let i = 0; i < EMBED_DIM; i++) norm += v[i] * v[i];
+  norm = Math.sqrt(norm) || 1;
+  const out = new Array(EMBED_DIM);
+  for (let i = 0; i < EMBED_DIM; i++) out[i] = v[i] / norm;
+  return out;
+}
+function cosineSim(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+}
+function lastUserText(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    if (typeof m.content === 'string') return m.content;
+    if (Array.isArray(m.content)) return m.content.map(c => c.text || '').join('\n');
+  }
+  return '';
+}
+const SEMANTIC_THRESHOLD = 0.92;
+
 function buildPrompt(messages) {
   return messages.map(m => {
     const role = (m.role || 'user').toUpperCase();
@@ -335,6 +384,54 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- Semantic cache lookup (single-turn user requests, no tools) ---
+    const userMsgsCount = messages.filter(m => m.role === 'user').length;
+    const isSingleTurn = userMsgsCount === 1 && !hasFunctionCallingTools;
+    const userText = lastUserText(messages);
+    let queryEmbedding = null;
+    if (!skipCache && isSingleTurn && userText && userText.length >= 4) {
+      queryEmbedding = embedText(userText);
+      const candidates = await base44.asServiceRole.entities.ResponseCache.filter({ model: internalModel, is_single_turn: true }, '-created_date', 200);
+      let best = null;
+      let bestScore = 0;
+      const now = new Date();
+      for (const c of candidates) {
+        if (c.expires_at && new Date(c.expires_at) <= now) continue;
+        if (!Array.isArray(c.embedding) || c.embedding.length !== EMBED_DIM) continue;
+        const score = cosineSim(queryEmbedding, c.embedding);
+        if (score > bestScore) { bestScore = score; best = c; }
+      }
+      if (best && bestScore >= SEMANTIC_THRESHOLD) {
+        await base44.asServiceRole.entities.ResponseCache.update(best.id, { hits: (best.hits || 0) + 1 });
+        const completionId = makeId('chatcmpl');
+        const cachedContent = best.content;
+        if (stream) {
+          const chars = Array.from(cachedContent);
+          const chunkSize = Math.max(5, Math.ceil(chars.length / 20));
+          const encoder = new TextEncoder();
+          const readable = new ReadableStream({
+            async start(controller) {
+              for (let i = 0; i < chars.length; i += chunkSize) {
+                const chunk = chars.slice(i, i + chunkSize).join('');
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: completionId, object: 'chat.completion.chunk', created: Math.floor(Date.now()/1000), model: requestedModel, choices: [{ index: 0, delta: { content: chunk }, finish_reason: null }], cached: 'semantic', similarity: bestScore })}\n\n`));
+                await new Promise(r => setTimeout(r, 20));
+              }
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: completionId, object: 'chat.completion.chunk', created: Math.floor(Date.now()/1000), model: requestedModel, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], cached: 'semantic' })}\n\n`));
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+              controller.close();
+            }
+          });
+          return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+        }
+        return Response.json({
+          id: completionId, object: 'chat.completion', created: Math.floor(Date.now()/1000), model: requestedModel,
+          cached: 'semantic', similarity: Number(bestScore.toFixed(4)),
+          choices: [{ index: 0, message: { role: 'assistant', content: cachedContent }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: best.prompt_tokens || 0, completion_tokens: best.completion_tokens || 0, total_tokens: best.total_tokens || 0 },
+        }, { headers: CORS });
+      }
+    }
+
     const prompt = buildPrompt(messages);
     let content = '';
     let llmError = null;
@@ -378,6 +475,9 @@ Deno.serve(async (req) => {
           cache_key: cacheKey, model: internalModel, content,
           prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens,
           hits: 0, expires_at: expiresAt,
+          embedding: isSingleTurn ? (queryEmbedding || embedText(userText)) : undefined,
+          last_user_text: isSingleTurn ? userText.slice(0, 500) : undefined,
+          is_single_turn: isSingleTurn,
         });
       } catch (_) {}
 

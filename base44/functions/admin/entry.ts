@@ -235,6 +235,33 @@ Deno.serve(async (req) => {
       return jsonRes({ success: true, deleted: allCaches.length });
     }
 
+    case 'cachemodels': {
+      const all = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
+      const models = [...new Set(all.map(c => c.model).filter(Boolean))];
+      return jsonRes({ models });
+    }
+
+    case 'filterclearcache': {
+      const { model, createdAfter, createdBefore, minHits, maxHits, dryRun } = body;
+      const all = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
+      const matched = all.filter(c => {
+        if (model && c.model !== model) return false;
+        if (createdAfter && new Date(c.created_date) < new Date(createdAfter)) return false;
+        if (createdBefore && new Date(c.created_date) > new Date(createdBefore)) return false;
+        const hits = c.hits || 0;
+        if (minHits !== undefined && minHits !== null && minHits !== '' && hits < Number(minHits)) return false;
+        if (maxHits !== undefined && maxHits !== null && maxHits !== '' && hits > Number(maxHits)) return false;
+        return true;
+      });
+      if (dryRun) {
+        return jsonRes({ count: matched.length, preview: matched.slice(0, 5).map(c => ({ id: c.id, model: c.model, hits: c.hits || 0, created: c.created_date })) });
+      }
+      for (const c of matched) {
+        await base44.asServiceRole.entities.ResponseCache.delete(c.id);
+      }
+      return jsonRes({ success: true, deleted: matched.length });
+    }
+
     default:
       return errRes(`Unknown action: ${action}`);
   }
