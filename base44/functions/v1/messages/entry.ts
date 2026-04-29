@@ -85,6 +85,14 @@ function lastUserText(messages) {
   }
   return '';
 }
+
+function normalizeCacheText(text) {
+  const t = (text || '').replace(/\r\n/g, '\n').trim();
+  if (t.length <= 2000) return t;
+  const markerMatch = t.match(/(?:USER REQUEST|User request|用户请求|用户问题|Question|问题)[:：]\s*([\s\S]*)$/);
+  if (markerMatch?.[1]?.trim()) return markerMatch[1].trim().slice(-1500);
+  return t.split('\n').map(line => line.trim()).filter(Boolean).slice(-24).join('\n').slice(-1500);
+}
 const SEMANTIC_THRESHOLD = 0.92;
 
 async function sha256(text) {
@@ -197,7 +205,7 @@ Deno.serve(async (req) => {
     // If tools are present, cache deterministic tool-call decisions too.
     const hasFunctionCallingTools = Array.isArray(tools) && tools.length > 0;
     if (hasFunctionCallingTools) {
-      const toolCacheKey = await sha256(JSON.stringify({ model: internalModel, system: system || null, messages, tools }));
+      const toolCacheKey = await sha256(JSON.stringify({ model: internalModel, system: system || null, last_user_text: normalizeCacheText(lastUserText(messages)), tools }));
       const toolCached = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: toolCacheKey });
       const toolCacheEntry = (toolCached && toolCached.length > 0 && (!toolCached[0].expires_at || new Date(toolCached[0].expires_at) > new Date())) ? toolCached[0] : null;
       if (toolCacheEntry) {
@@ -421,7 +429,8 @@ Deno.serve(async (req) => {
     // Hit means: at some past time, an identical conversation prefix was answered with the same content.
     const sysKey = system || null;
     async function keyFor(prefixMessages) {
-      return await sha256(JSON.stringify({ model: internalModel, system: sysKey, messages: prefixMessages }));
+      const cacheText = normalizeCacheText(lastUserText(prefixMessages));
+      return await sha256(JSON.stringify({ model: internalModel, system: sysKey, last_user_text: cacheText || JSON.stringify(prefixMessages) }));
     }
 
     const cacheKey = await keyFor(messages);
@@ -471,7 +480,7 @@ Deno.serve(async (req) => {
     // --- Semantic cache lookup (single-turn, no tools) ---
     const userMsgsCount = messages.filter(m => m.role === 'user').length;
     const isSingleTurn = userMsgsCount === 1;
-    const userText = lastUserText(messages);
+    const userText = normalizeCacheText(lastUserText(messages));
     let queryEmbedding = null;
     if (isSingleTurn && userText && userText.length >= 4) {
       queryEmbedding = embedText(userText);
