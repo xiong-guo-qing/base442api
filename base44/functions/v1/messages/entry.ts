@@ -194,9 +194,40 @@ Deno.serve(async (req) => {
       }
     }
 
-    // If tools are present, try upstream first, otherwise emulate via Base44 LLM
+    // If tools are present, cache deterministic tool-call decisions too.
     const hasFunctionCallingTools = Array.isArray(tools) && tools.length > 0;
     if (hasFunctionCallingTools) {
+      const toolCacheKey = await sha256(JSON.stringify({ model: internalModel, system: system || null, messages, tools }));
+      const toolCached = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: toolCacheKey });
+      const toolCacheEntry = (toolCached && toolCached.length > 0 && (!toolCached[0].expires_at || new Date(toolCached[0].expires_at) > new Date())) ? toolCached[0] : null;
+      if (toolCacheEntry) {
+        await base44.asServiceRole.entities.ResponseCache.update(toolCacheEntry.id, { hits: (toolCacheEntry.hits || 0) + 1 });
+        if (stream) {
+          const cached = JSON.parse(toolCacheEntry.content);
+          const blocks = cached.content || [];
+          const encoder = new TextEncoder();
+          const readable = new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { ...cached, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: toolCacheEntry.prompt_tokens || 0, output_tokens: 0 } } })}\n\n`));
+              for (let idx = 0; idx < blocks.length; idx++) {
+                const b = blocks[idx];
+                controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: idx, content_block: b.type === 'tool_use' ? { type: 'tool_use', id: b.id, name: b.name, input: {} } : { type: 'text', text: '' } })}\n\n`));
+                if (b.type === 'tool_use') {
+                  controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: idx, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input || {}) } })}\n\n`));
+                } else {
+                  controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: idx, delta: { type: 'text_delta', text: b.text || '' } })}\n\n`));
+                }
+                controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: idx })}\n\n`));
+              }
+              controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: cached.stop_reason || 'end_turn', stop_sequence: null }, usage: { output_tokens: toolCacheEntry.completion_tokens || 0 } })}\n\n`));
+              controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+              controller.close();
+            }
+          });
+          return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Cache': 'HIT' } });
+        }
+        return new Response(toolCacheEntry.content, { headers: { ...CORS, 'Content-Type': 'application/json', 'X-Cache': 'HIT' } });
+      }
       const upstreams = await base44.asServiceRole.entities.Config.filter({ type: 'upstream', enabled: true });
       const upstream = upstreams[0];
       if (upstream && upstream.endpoint && upstream.apiKey) {
@@ -210,7 +241,21 @@ Deno.serve(async (req) => {
           body: JSON.stringify({ ...body, model: upstream.model || body.model }),
         });
         const upstreamBody = await upstreamRes.text();
-        return new Response(upstreamBody, { status: upstreamRes.status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+        if (upstreamRes.ok) {
+          try {
+            await base44.asServiceRole.entities.ResponseCache.create({
+              cache_key: toolCacheKey,
+              model: internalModel,
+              content: upstreamBody,
+              prompt_tokens: estimateTokens(JSON.stringify({ system, messages, tools })),
+              completion_tokens: estimateTokens(upstreamBody),
+              total_tokens: estimateTokens(JSON.stringify({ system, messages, tools })) + estimateTokens(upstreamBody),
+              hits: 0,
+              expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+            });
+          } catch (cacheErr) { console.error('[v1/messages] upstream tool cache write failed:', cacheErr.message); }
+        }
+        return new Response(upstreamBody, { status: upstreamRes.status, headers: { ...CORS, 'Content-Type': 'application/json', 'X-Cache': 'MISS' } });
       }
 
       // Emulate tool use via Base44 LLM with structured JSON output
@@ -253,6 +298,20 @@ Deno.serve(async (req) => {
           });
         } catch (_) {}
 
+        const responseBodyForCache = {
+          id: msgId, type: 'message', role: 'assistant',
+          content: blocks, model: requestedModel,
+          stop_reason: 'tool_use', stop_sequence: null,
+          usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+        };
+        try {
+          await base44.asServiceRole.entities.ResponseCache.create({
+            cache_key: toolCacheKey, model: internalModel, content: JSON.stringify(responseBodyForCache),
+            prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+            hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+          });
+        } catch (cacheErr) { console.error('[v1/messages] tool cache write failed:', cacheErr.message); }
+
         if (stream) {
           const encoder = new TextEncoder();
           const readable = new ReadableStream({
@@ -277,12 +336,20 @@ Deno.serve(async (req) => {
           return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
         }
 
-        return Response.json({
+        const responseBody = {
           id: msgId, type: 'message', role: 'assistant',
           content: blocks, model: requestedModel,
           stop_reason: 'tool_use', stop_sequence: null,
           usage: { input_tokens: inputTokens, output_tokens: outputTokens },
-        }, { headers: CORS });
+        };
+        try {
+          await base44.asServiceRole.entities.ResponseCache.create({
+            cache_key: toolCacheKey, model: internalModel, content: JSON.stringify(responseBody),
+            prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+            hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+          });
+        } catch (cacheErr) { console.error('[v1/messages] tool cache write failed:', cacheErr.message); }
+        return Response.json(responseBody, { headers: { ...CORS, 'X-Cache': 'MISS' } });
       }
 
       // action === 'message'
@@ -295,6 +362,20 @@ Deno.serve(async (req) => {
           timestamp: new Date().toISOString(),
         });
       } catch (_) {}
+
+      const responseBodyForCache = {
+        id: msgId, type: 'message', role: 'assistant',
+        content: [{ type: 'text', text: finalText }],
+        model: requestedModel, stop_reason: 'end_turn', stop_sequence: null,
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      };
+      try {
+        await base44.asServiceRole.entities.ResponseCache.create({
+          cache_key: toolCacheKey, model: internalModel, content: JSON.stringify(responseBodyForCache),
+          prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+          hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+        });
+      } catch (cacheErr) { console.error('[v1/messages] stream tool text cache write failed:', cacheErr.message); }
 
       if (stream) {
         const encoder = new TextEncoder();
@@ -318,12 +399,20 @@ Deno.serve(async (req) => {
         return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
       }
 
-      return Response.json({
+      const responseBody = {
         id: msgId, type: 'message', role: 'assistant',
         content: [{ type: 'text', text: finalText }],
         model: requestedModel, stop_reason: 'end_turn', stop_sequence: null,
         usage: { input_tokens: inputTokens, output_tokens: outputTokens },
-      }, { headers: CORS });
+      };
+      try {
+        await base44.asServiceRole.entities.ResponseCache.create({
+          cache_key: toolCacheKey, model: internalModel, content: JSON.stringify(responseBody),
+          prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+          hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+        });
+      } catch (cacheErr) { console.error('[v1/messages] tool text cache write failed:', cacheErr.message); }
+      return Response.json(responseBody, { headers: { ...CORS, 'X-Cache': 'MISS' } });
     }
 
     const prompt = buildPrompt(system, messages);
@@ -449,7 +538,7 @@ Deno.serve(async (req) => {
         last_user_text: isSingleTurn ? userText.slice(0, 500) : undefined,
         is_single_turn: isSingleTurn,
       });
-    } catch (_) {}
+    } catch (cacheErr) { console.error('[v1/messages] cache write failed:', cacheErr.message); }
 
     // Backfill prefix cache from the request's own conversation history.
     // For every assistant message A at index i, the prefix messages[0..i] was historically
