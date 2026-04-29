@@ -6,6 +6,13 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+function createInternalClient(req) {
+  const headers = new Headers(req.headers);
+  headers.delete('Authorization');
+  headers.delete('x-api-key');
+  return createClientFromRequest(new Request(req.url, { method: req.method, headers }));
+}
+
 // External model name → Base44 internal model name
 const MODEL_MAP = {
   // Direct mappings
@@ -149,7 +156,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const base44 = createClientFromRequest(req);
+    const base44 = createInternalClient(req);
     const authHeader = req.headers.get('Authorization') || '';
     const apiKey = authHeader.replace('Bearer ', '').trim();
 

@@ -6,6 +6,13 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta',
 };
 
+function createInternalClient(req) {
+  const headers = new Headers(req.headers);
+  headers.delete('Authorization');
+  headers.delete('x-api-key');
+  return createClientFromRequest(new Request(req.url, { method: req.method, headers }));
+}
+
 const MODEL_MAP = {
   'claude-sonnet-4.6': 'claude_sonnet_4_6',
   'claude-opus-4.6': 'claude_opus_4_6',
@@ -147,7 +154,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   try {
-    const base44 = createClientFromRequest(req);
+    const base44 = createInternalClient(req);
     const apiKey =
       req.headers.get('x-api-key') ||
       (req.headers.get('Authorization') || '').replace('Bearer ', '').trim();
