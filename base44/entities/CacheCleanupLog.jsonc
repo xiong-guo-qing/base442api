@@ -10,12 +10,12 @@
     "scanned": {
       "type": "number",
       "default": 0,
-      "description": "Number of expired records scanned"
+      "description": "Number of records scanned"
     },
     "deleted": {
       "type": "number",
       "default": 0,
-      "description": "Number of records actually deleted"
+      "description": "Number of records deleted"
     },
     "duration_ms": {
       "type": "number",
@@ -34,6 +34,20 @@
     "error_message": {
       "type": "string",
       "description": "Error details if status != success"
+    },
+    "cleanup_reason": {
+      "type": "string",
+      "description": "Summary of cleanup triggers used"
+    },
+    "estimated_cache_bytes": {
+      "type": "number",
+      "default": 0,
+      "description": "Estimated cache content size before smart cleanup"
+    },
+    "smart_deleted": {
+      "type": "number",
+      "default": 0,
+      "description": "Records deleted by frequency-based smart cleanup"
     }
   },
   "required": [
