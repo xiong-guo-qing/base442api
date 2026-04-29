@@ -1,0 +1,43 @@
+{
+  "name": "CacheCleanupLog",
+  "type": "object",
+  "properties": {
+    "ran_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the cleanup task ran"
+    },
+    "scanned": {
+      "type": "number",
+      "default": 0,
+      "description": "Number of expired records scanned"
+    },
+    "deleted": {
+      "type": "number",
+      "default": 0,
+      "description": "Number of records actually deleted"
+    },
+    "duration_ms": {
+      "type": "number",
+      "default": 0,
+      "description": "Total execution time in milliseconds"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "partial",
+        "error"
+      ],
+      "default": "success"
+    },
+    "error_message": {
+      "type": "string",
+      "description": "Error details if status != success"
+    }
+  },
+  "required": [
+    "ran_at",
+    "status"
+  ]
+}

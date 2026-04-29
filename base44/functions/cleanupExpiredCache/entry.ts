@@ -1,15 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
+  const startedAt = Date.now();
+  const ranAtIso = new Date(startedAt).toISOString();
+  let scanned = 0;
+  let deleted = 0;
+  let status = 'success';
+  let errorMessage = null;
+
   try {
     const base44 = createClientFromRequest(req);
-    const now = new Date();
-    const nowIso = now.toISOString();
+    const nowIso = new Date().toISOString();
 
-    let deleted = 0;
-    let scanned = 0;
     const BATCH = 500;
-    const MAX_BATCHES = 20; // safety cap: up to 10k records per run
+    const MAX_BATCHES = 20; // up to 10k records per run
 
     for (let i = 0; i < MAX_BATCHES; i++) {
       const batch = await base44.asServiceRole.entities.ResponseCache.filter(
@@ -24,16 +28,40 @@ Deno.serve(async (req) => {
         try {
           await base44.asServiceRole.entities.ResponseCache.delete(c.id);
           deleted++;
-        } catch (_) { /* ignore individual delete errors */ }
+        } catch (err) {
+          status = 'partial';
+          console.warn(`[cleanupExpiredCache] failed to delete ${c.id}: ${err.message}`);
+        }
       }
 
       if (batch.length < BATCH) break;
     }
 
-    console.log(`[cleanupExpiredCache] scanned=${scanned} deleted=${deleted} at=${nowIso}`);
-    return Response.json({ success: true, scanned, deleted, at: nowIso });
+    const durationMs = Date.now() - startedAt;
+    console.log(`[cleanupExpiredCache] scanned=${scanned} deleted=${deleted} duration=${durationMs}ms status=${status}`);
+
+    try {
+      await base44.asServiceRole.entities.CacheCleanupLog.create({
+        ran_at: ranAtIso, scanned, deleted, duration_ms: durationMs, status,
+      });
+    } catch (logErr) {
+      console.error('[cleanupExpiredCache] failed to write log:', logErr.message);
+    }
+
+    return Response.json({ success: true, scanned, deleted, duration_ms: durationMs, status, ran_at: ranAtIso });
   } catch (error) {
-    console.error('[cleanupExpiredCache] error:', error.message);
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+    status = 'error';
+    errorMessage = error.message;
+    const durationMs = Date.now() - startedAt;
+    console.error('[cleanupExpiredCache] error:', errorMessage);
+
+    try {
+      const base44 = createClientFromRequest(req);
+      await base44.asServiceRole.entities.CacheCleanupLog.create({
+        ran_at: ranAtIso, scanned, deleted, duration_ms: durationMs, status, error_message: errorMessage,
+      });
+    } catch (_) {}
+
+    return Response.json({ success: false, error: errorMessage, scanned, deleted }, { status: 500 });
   }
 });
