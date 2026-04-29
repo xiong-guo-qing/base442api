@@ -372,13 +372,42 @@ Deno.serve(async (req) => {
     const reasoningTokens = thinkingEnabled ? Math.floor(completionTokens * 0.3) : 0;
 
     if (!skipCache && cacheKey) {
+      const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
       try {
         await base44.asServiceRole.entities.ResponseCache.create({
           cache_key: cacheKey, model: internalModel, content,
           prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens,
-          hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+          hits: 0, expires_at: expiresAt,
         });
       } catch (_) {}
+
+      // Prefix backfill: for each assistant message in the history, cache (prefix → that assistant reply).
+      // Re-runs and rollbacks of any past turn will hit instantly.
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
+        if (m.role !== 'assistant') continue;
+        let aText = '';
+        if (typeof m.content === 'string') aText = m.content;
+        else if (Array.isArray(m.content)) aText = m.content.map(c => c.text || '').join('\n');
+        if (!aText) continue;
+        const prefix = messages.slice(0, i);
+        if (prefix.length === 0) continue;
+        const prefixCacheInput = JSON.stringify({ model: internalModel, messages: prefix, temperature: temperature ?? null, top_p: top_p ?? null, max_tokens: max_tokens ?? null, response_format: response_format ?? null, reasoning: thinkingEnabled ? (effortRaw || 'high') : null, web_search: webSearchEnabled });
+        const k = await sha256(prefixCacheInput);
+        try {
+          const exists = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: k });
+          if (exists && exists.length > 0) continue;
+          const partialPrompt = buildPrompt(prefix);
+          const aTokens = estimateTokens(aText);
+          await base44.asServiceRole.entities.ResponseCache.create({
+            cache_key: k, model: internalModel, content: aText,
+            prompt_tokens: estimateTokens(partialPrompt),
+            completion_tokens: aTokens,
+            total_tokens: estimateTokens(partialPrompt) + aTokens,
+            hits: 0, expires_at: expiresAt,
+          });
+        } catch (_) {}
+      }
     }
 
     try {

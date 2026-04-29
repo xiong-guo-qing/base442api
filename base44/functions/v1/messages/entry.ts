@@ -278,12 +278,20 @@ Deno.serve(async (req) => {
 
     const prompt = buildPrompt(system, messages);
 
-    // Cache lookup (only for non-tool requests)
-    const cacheKey = await sha256(JSON.stringify({ model: internalModel, system: system || null, messages }));
-    const cached = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: cacheKey });
-    if (cached && cached.length > 0) {
-      const entry = cached[0];
-      if (!entry.expires_at || new Date(entry.expires_at) > new Date()) {
+    // Prefix cache lookup: try the exact request first, then progressively shorter prefixes
+    // Hit means: at some past time, an identical conversation prefix was answered with the same content.
+    const sysKey = system || null;
+    async function keyFor(prefixMessages) {
+      return await sha256(JSON.stringify({ model: internalModel, system: sysKey, messages: prefixMessages }));
+    }
+
+    const cacheKey = await keyFor(messages);
+    const found = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: cacheKey });
+    const cacheEntry = (found && found.length > 0 && (!found[0].expires_at || new Date(found[0].expires_at) > new Date())) ? found[0] : null;
+
+    if (cacheEntry) {
+      const entry = cacheEntry;
+      {
         await base44.asServiceRole.entities.ResponseCache.update(entry.id, { hits: (entry.hits || 0) + 1 });
         const cachedContent = entry.content;
         const cachedIn = entry.prompt_tokens || 0;
@@ -326,14 +334,45 @@ Deno.serve(async (req) => {
 
     const inputTokens = estimateTokens(prompt);
     const outputTokens = estimateTokens(content);
+    const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
 
+    // Write cache for the exact request
     try {
       await base44.asServiceRole.entities.ResponseCache.create({
         cache_key: cacheKey, model: internalModel, content,
         prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
-        hits: 0, expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+        hits: 0, expires_at: expiresAt,
       });
     } catch (_) {}
+
+    // Backfill prefix cache from the request's own conversation history.
+    // For every assistant message A at index i, the prefix messages[0..i] was historically
+    // answered with A. Cache that mapping so that re-runs / rollbacks hit immediately.
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role !== 'assistant') continue;
+      // Extract assistant text content (skip tool_use blocks)
+      let aText = '';
+      if (typeof m.content === 'string') aText = m.content;
+      else if (Array.isArray(m.content)) aText = m.content.filter(c => c.type === 'text').map(c => c.text || '').join('\n');
+      if (!aText) continue;
+      const prefix = messages.slice(0, i);
+      if (prefix.length === 0) continue;
+      const k = await keyFor(prefix);
+      try {
+        const exists = await base44.asServiceRole.entities.ResponseCache.filter({ cache_key: k });
+        if (exists && exists.length > 0) continue;
+        const partialPrompt = buildPrompt(system, prefix);
+        const aTokens = estimateTokens(aText);
+        await base44.asServiceRole.entities.ResponseCache.create({
+          cache_key: k, model: internalModel, content: aText,
+          prompt_tokens: estimateTokens(partialPrompt),
+          completion_tokens: aTokens,
+          total_tokens: estimateTokens(partialPrompt) + aTokens,
+          hits: 0, expires_at: expiresAt,
+        });
+      } catch (_) {}
+    }
 
     try {
       await base44.asServiceRole.entities.UsageStats.create({
