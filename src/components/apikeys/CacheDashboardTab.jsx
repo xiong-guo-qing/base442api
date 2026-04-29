@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { base44 } from '@/api/base44Client';
 import { Database, Zap, TrendingUp, RefreshCw, Coins, Eye } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import CacheFilterClear from './CacheFilterClear';
@@ -34,13 +35,49 @@ export default function CacheDashboardTab({ adminToken }) {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/functions/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cachedashboard', adminToken }),
+      const [rawCaches, rawStats, rawKeys] = await Promise.all([
+        base44.entities.ResponseCache.list('-created_date', 500),
+        base44.entities.UsageStats.list('-created_date', 500),
+        base44.entities.APIKey.list('-created_date', 200),
+      ]);
+
+      const caches = (rawCaches || []).sort((a, b) => (b.hits || 0) - (a.hits || 0));
+      const stats = rawStats || [];
+      const keys = rawKeys || [];
+      const totalHits = caches.reduce((s, c) => s + (c.hits || 0), 0);
+      const totalRequests = stats.length;
+      const byModelMap = {};
+      caches.forEach(c => {
+        if (c.hits) byModelMap[c.model || 'unknown'] = (byModelMap[c.model || 'unknown'] || 0) + c.hits;
       });
-      const json = await res.json();
-      setData(json.summary ? json : { error: json.error?.message || '缓存数据加载失败' });
+      const keyMap = Object.fromEntries(keys.map(k => [k.id, k.name || `${(k.key || '').slice(0, 12)}...`]))
+      const byKeyMap = {};
+      stats.forEach(s => {
+        const name = keyMap[s.api_key_id] || '未知';
+        byKeyMap[name] = (byKeyMap[name] || 0) + 1;
+      });
+
+      setData({
+        summary: {
+          totalEntries: caches.length,
+          totalHits,
+          totalRequests,
+          hitRate: totalRequests > 0 ? totalHits / (totalHits + totalRequests) : 0,
+          savedTokens: caches.reduce((s, c) => s + (c.total_tokens || 0) * (c.hits || 0), 0),
+        },
+        byModel: Object.entries(byModelMap).map(([model, hits]) => ({ model, hits })),
+        byKey: Object.entries(byKeyMap).map(([name, requests]) => ({ name, requests })).sort((a, b) => b.requests - a.requests).slice(0, 10),
+        top10: caches.slice(0, 10).map(c => ({
+          id: c.id,
+          model: c.model,
+          hits: c.hits || 0,
+          tokens: c.total_tokens || 0,
+          preview: (c.content || '').slice(0, 80),
+          created: c.created_date,
+        })),
+      });
+    } catch (error) {
+      setData({ error: error.message || '缓存数据加载失败' });
     } finally {
       setLoading(false);
     }
