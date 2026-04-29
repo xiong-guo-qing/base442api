@@ -57,6 +57,19 @@ function estimateTokens(text) {
   return Math.ceil((text || '').length / 4);
 }
 
+async function recordUsage(base44, keyRecord, model, promptTokens = 0, completionTokens = 0) {
+  try {
+    await base44.asServiceRole.entities.UsageStats.create({
+      api_key_id: keyRecord.id,
+      model,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (_) {}
+}
+
 // --- Lightweight semantic embedding (local, deterministic) ---
 // Builds a 256-dim sparse vector from char n-grams (n=3) + token unigrams,
 // with simple stopword filtering. Good enough for "is this paraphrase?" matching.
@@ -360,6 +373,7 @@ Deno.serve(async (req) => {
         const entry = cached[0];
         if (!entry.expires_at || new Date(entry.expires_at) > now) {
           await base44.asServiceRole.entities.ResponseCache.update(entry.id, { hits: (entry.hits || 0) + 1 });
+          await recordUsage(base44, keyRecord, internalModel, entry.prompt_tokens || 0, entry.completion_tokens || 0);
           const completionId = makeId('chatcmpl');
           const cachedContent = entry.content;
 
@@ -410,6 +424,7 @@ Deno.serve(async (req) => {
       }
       if (best && bestScore >= SEMANTIC_THRESHOLD) {
         await base44.asServiceRole.entities.ResponseCache.update(best.id, { hits: (best.hits || 0) + 1 });
+        await recordUsage(base44, keyRecord, internalModel, best.prompt_tokens || 0, best.completion_tokens || 0);
         const completionId = makeId('chatcmpl');
         const cachedContent = best.content;
         if (stream) {

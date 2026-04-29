@@ -60,6 +60,19 @@ function estimateTokens(text) {
   return Math.ceil((text || '').length / 4);
 }
 
+async function recordUsage(base44, keyRecord, model, promptTokens = 0, completionTokens = 0) {
+  try {
+    await base44.asServiceRole.entities.UsageStats.create({
+      api_key_id: keyRecord.id,
+      model,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (_) {}
+}
+
 const EMBED_DIM = 256;
 const STOPWORDS = new Set(['the','a','an','is','are','was','were','of','to','in','on','at','for','and','or','but','i','you','it','this','that','please','can','could','would','will','do','does','did','have','has','had','be','been','am','my','your','我','你','的','了','是','吗','啊','请','帮','给','把','一','在','和','或','也','都','就','要','不','没','有','吧']);
 function embedText(text) {
@@ -328,6 +341,7 @@ Deno.serve(async (req) => {
         if (!entry.expires_at || new Date(entry.expires_at) > now) {
           // Cache hit — update hits counter
           await base44.asServiceRole.entities.ResponseCache.update(entry.id, { hits: (entry.hits || 0) + 1 });
+          await recordUsage(base44, keyRecord, internalModel, entry.prompt_tokens || 0, entry.completion_tokens || 0);
 
           const completionId = makeId('chatcmpl');
           const cachedContent = entry.content;
@@ -402,6 +416,7 @@ Deno.serve(async (req) => {
       }
       if (best && bestScore >= SEMANTIC_THRESHOLD) {
         await base44.asServiceRole.entities.ResponseCache.update(best.id, { hits: (best.hits || 0) + 1 });
+        await recordUsage(base44, keyRecord, internalModel, best.prompt_tokens || 0, best.completion_tokens || 0);
         const completionId = makeId('chatcmpl');
         const cachedContent = best.content;
         if (stream) {
