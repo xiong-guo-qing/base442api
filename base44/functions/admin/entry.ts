@@ -310,6 +310,44 @@ Deno.serve(async (req) => {
       return jsonRes({ daily, storage, sinceIso, days });
     }
 
+    case 'cachedetail': {
+      const { cacheId } = body;
+      if (!cacheId) return errRes('cacheId is required');
+      const all = await base44.asServiceRole.entities.ResponseCache.filter({ id: cacheId });
+      const entry = all && all[0];
+      if (!entry) return errRes('Cache entry not found', 404);
+      const now = new Date();
+      const expiresAt = entry.expires_at ? new Date(entry.expires_at) : null;
+      const isExpired = expiresAt ? expiresAt <= now : false;
+      const ttlSeconds = expiresAt ? Math.floor((expiresAt - now) / 1000) : null;
+      const embeddingSummary = Array.isArray(entry.embedding) ? {
+        dim: entry.embedding.length,
+        nonZero: entry.embedding.filter(v => v !== 0).length,
+        preview: entry.embedding.slice(0, 8),
+      } : null;
+      return jsonRes({
+        entry: {
+          id: entry.id,
+          cache_key: entry.cache_key,
+          model: entry.model,
+          content: entry.content,
+          prompt_tokens: entry.prompt_tokens || 0,
+          completion_tokens: entry.completion_tokens || 0,
+          total_tokens: entry.total_tokens || 0,
+          hits: entry.hits || 0,
+          is_single_turn: !!entry.is_single_turn,
+          last_user_text: entry.last_user_text || null,
+          embedding_summary: embeddingSummary,
+          created_date: entry.created_date,
+          updated_date: entry.updated_date,
+          expires_at: entry.expires_at || null,
+          is_expired: isExpired,
+          ttl_seconds: ttlSeconds,
+          content_length: (entry.content || '').length,
+        }
+      });
+    }
+
     case 'cachemodels': {
       const all = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
       const models = [...new Set(all.map(c => c.model).filter(Boolean))];

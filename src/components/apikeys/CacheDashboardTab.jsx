@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Database, Zap, TrendingUp, RefreshCw, Coins } from 'lucide-react';
+import { Database, Zap, TrendingUp, RefreshCw, Coins, Eye } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import CacheFilterClear from './CacheFilterClear';
 import CacheTrendsCharts from './CacheTrendsCharts';
+import CacheDetailDrawer from './CacheDetailDrawer';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
 
@@ -28,6 +29,7 @@ function StatCard({ icon: Icon, label, value, sublabel, color = 'blue' }) {
 export default function CacheDashboardTab({ adminToken }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [detailId, setDetailId] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -138,6 +140,7 @@ export default function CacheDashboardTab({ adminToken }) {
                   <th className="text-left py-2 font-medium">内容预览</th>
                   <th className="text-right py-2 font-medium">命中</th>
                   <th className="text-right py-2 font-medium">Token</th>
+                  <th className="text-right py-2 font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -152,6 +155,14 @@ export default function CacheDashboardTab({ adminToken }) {
                       </span>
                     </td>
                     <td className="py-3 text-right text-slate-400 font-mono text-xs">{entry.tokens.toLocaleString()}</td>
+                    <td className="py-3 text-right">
+                      <button
+                        onClick={() => setDetailId(entry.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-blue-600/20 hover:text-blue-300 text-slate-300 text-xs transition-colors border border-slate-700 hover:border-blue-500/40"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> 详情
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -159,6 +170,13 @@ export default function CacheDashboardTab({ adminToken }) {
           </div>
         )}
       </div>
+
+      <CacheDetailDrawer
+        adminToken={adminToken}
+        cacheId={detailId}
+        open={!!detailId}
+        onClose={() => setDetailId(null)}
+      />
     </div>
   );
 }
