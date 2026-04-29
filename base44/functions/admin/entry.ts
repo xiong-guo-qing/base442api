@@ -180,6 +180,53 @@ Deno.serve(async (req) => {
       return jsonRes({ count: caches.length, totalHits, savedTokens });
     }
 
+    case 'cachedashboard': {
+      // Aggregate data for the cache dashboard
+      const caches = await base44.asServiceRole.entities.ResponseCache.list('-hits', 500);
+      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 500);
+      const keys = await base44.asServiceRole.entities.APIKey.list('-created_date', 200);
+
+      const totalEntries = caches.length;
+      const totalHits = caches.reduce((s, c) => s + (c.hits || 0), 0);
+      const totalRequests = stats.length;
+      const hitRate = totalRequests > 0 ? totalHits / (totalHits + totalRequests) : 0;
+      const savedTokens = caches.reduce((s, c) => s + (c.total_tokens || 0) * (c.hits || 0), 0);
+
+      // Hits by model
+      const byModel = {};
+      for (const c of caches) {
+        if (!c.hits) continue;
+        byModel[c.model] = (byModel[c.model] || 0) + c.hits;
+      }
+      const modelData = Object.entries(byModel).map(([model, hits]) => ({ model, hits }));
+
+      // Top 10 hottest cache entries
+      const top10 = caches.slice(0, 10).map(c => ({
+        id: c.id,
+        model: c.model,
+        hits: c.hits || 0,
+        tokens: c.total_tokens || 0,
+        preview: (c.content || '').slice(0, 80),
+        created: c.created_date,
+      }));
+
+      // Hits by API Key (proxy: count usage records per key, since cache hits aren't tracked per-key)
+      const keyMap = Object.fromEntries(keys.map(k => [k.id, k.name || k.key.slice(0, 12) + '...']));
+      const byKey = {};
+      for (const s of stats) {
+        const name = keyMap[s.api_key_id] || '未知';
+        byKey[name] = (byKey[name] || 0) + 1;
+      }
+      const keyData = Object.entries(byKey).map(([name, requests]) => ({ name, requests })).sort((a, b) => b.requests - a.requests).slice(0, 10);
+
+      return jsonRes({
+        summary: { totalEntries, totalHits, totalRequests, hitRate, savedTokens },
+        byModel: modelData,
+        byKey: keyData,
+        top10,
+      });
+    }
+
     case 'clearcache': {
       const allCaches = await base44.asServiceRole.entities.ResponseCache.list('-created_date', 500);
       for (const c of allCaches) {

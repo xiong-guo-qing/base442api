@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { LogOut, Zap, Key, BarChart2, Settings, Shield, Cpu } from 'lucide-react';
+import { LogOut, Zap, Key, BarChart2, Settings, Shield, Cpu, Database } from 'lucide-react';
 import EndpointPanel from './EndpointPanel';
 import ApiKeysTab from './ApiKeysTab';
 import ModelsTab from './ModelsTab';
 import StatsTab from './StatsTab';
 import UpstreamTab from './UpstreamTab';
 import ChangePassTab from './ChangePassTab';
+import CacheDashboardTab from './CacheDashboardTab';
 
 const TABS = [
   { id: 'keys', label: 'API Keys', icon: Key },
   { id: 'models', label: '支持模型', icon: Cpu },
   { id: 'stats', label: '使用统计', icon: BarChart2 },
+  { id: 'cache', label: '缓存仪表盘', icon: Database },
   { id: 'upstream', label: '上游配置', icon: Settings },
   { id: 'password', label: '修改密码', icon: Shield },
 ];
@@ -70,6 +72,7 @@ export default function Dashboard({ adminToken, onLogout, sha256 }) {
         {activeTab === 'keys' && <ApiKeysTab adminToken={adminToken} />}
         {activeTab === 'models' && <ModelsTab />}
         {activeTab === 'stats' && <StatsTab adminToken={adminToken} />}
+        {activeTab === 'cache' && <CacheDashboardTab adminToken={adminToken} />}
         {activeTab === 'upstream' && <UpstreamTab adminToken={adminToken} />}
         {activeTab === 'password' && <ChangePassTab adminToken={adminToken} sha256={sha256} onLogout={onLogout} />}
       </div>
