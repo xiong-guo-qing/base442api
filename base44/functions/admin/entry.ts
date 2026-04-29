@@ -119,6 +119,11 @@ Deno.serve(async (req) => {
       return jsonRes({ stats });
     }
 
+    case 'requestlogs': {
+      const logs = await base44.asServiceRole.entities.RequestLog.list('-created_date', 200);
+      return jsonRes({ logs });
+    }
+
     case 'changepass': {
       const { oldPassHash, newPassHash } = body;
       if (!oldPassHash || !newPassHash) return errRes('Both old and new password hashes required');

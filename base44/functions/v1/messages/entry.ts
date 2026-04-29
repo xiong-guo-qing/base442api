@@ -40,6 +40,31 @@ function makeId(prefix) {
   return prefix + '_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+function getSourceIp(req) {
+  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || '';
+}
+
+function sanitizeParams(body) {
+  const safe = { ...body };
+  delete safe.api_key;
+  if (Array.isArray(safe.messages)) safe.messages = safe.messages.slice(-6);
+  const text = JSON.stringify(safe, null, 2);
+  return text.length > 6000 ? text.slice(0, 6000) + '\n...已截断' : text;
+}
+
+async function writeRequestLog(base44, data) {
+  try {
+    await base44.asServiceRole.entities.RequestLog.create({
+      ...data,
+      duration_ms: Date.now() - data.started_at,
+      logged_at: new Date().toISOString(),
+      started_at: undefined,
+    });
+  } catch (err) {
+    console.error('[requestLog] write failed:', err.message);
+  }
+}
+
 function estimateTokens(text) {
   return Math.ceil((text || '').length / 4);
 }
@@ -174,8 +199,24 @@ const TOOL_RESPONSE_SCHEMA = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
+  const startedAt = Date.now();
+  const requestId = makeId('req');
+  let base44;
+  let requestLog = {
+    request_id: requestId,
+    endpoint: '/v1/messages',
+    method: req.method,
+    source_ip: getSourceIp(req),
+    origin: req.headers.get('origin') || '',
+    referer: req.headers.get('referer') || '',
+    user_agent: req.headers.get('user-agent') || '',
+    status_code: 500,
+    cache_status: 'miss',
+    started_at: startedAt,
+  };
+
   try {
-    const base44 = createInternalClient(req);
+    base44 = createInternalClient(req);
     const apiKey =
       req.headers.get('x-api-key') ||
       (req.headers.get('Authorization') || '').replace('Bearer ', '').trim();
@@ -197,6 +238,9 @@ Deno.serve(async (req) => {
     const keyRecord = keys[0];
 
     const body = await req.json();
+    requestLog.api_key_id = keyRecord.id;
+    requestLog.api_key_name = keyRecord.name || '';
+    requestLog.request_params = sanitizeParams(body);
     const {
       model: requestedModel = 'claude-sonnet-4.6',
       messages = [],
@@ -208,6 +252,8 @@ Deno.serve(async (req) => {
     } = body;
 
     let internalModel = MODEL_MAP[requestedModel] || 'claude_sonnet_4_6';
+    requestLog.requested_model = requestedModel;
+    requestLog.model = internalModel;
 
     if (thinking?.type === 'enabled' || thinking?.budget_tokens > 0) {
       if (internalModel.startsWith('claude')) {
@@ -224,6 +270,10 @@ Deno.serve(async (req) => {
       if (toolCacheEntry) {
         await base44.asServiceRole.entities.ResponseCache.update(toolCacheEntry.id, { hits: (toolCacheEntry.hits || 0) + 1 });
         await recordUsage(base44, keyRecord, internalModel, toolCacheEntry.prompt_tokens || 0, toolCacheEntry.completion_tokens || 0);
+        requestLog.cache_status = 'hit';
+        requestLog.status_code = 200;
+        requestLog.response_summary = 'Tool response served from cache';
+        await writeRequestLog(base44, requestLog);
         if (stream) {
           const cached = JSON.parse(toolCacheEntry.content);
           const blocks = cached.content || [];
@@ -456,6 +506,10 @@ Deno.serve(async (req) => {
       {
         await base44.asServiceRole.entities.ResponseCache.update(entry.id, { hits: (entry.hits || 0) + 1 });
         await recordUsage(base44, keyRecord, internalModel, entry.prompt_tokens || 0, entry.completion_tokens || 0);
+        requestLog.cache_status = 'hit';
+        requestLog.status_code = 200;
+        requestLog.response_summary = 'Response served from exact cache';
+        await writeRequestLog(base44, requestLog);
         const cachedContent = entry.content;
         const cachedIn = entry.prompt_tokens || 0;
         const cachedOut = entry.completion_tokens || 0;
@@ -512,6 +566,10 @@ Deno.serve(async (req) => {
       if (best && bestScore >= SEMANTIC_THRESHOLD) {
         await base44.asServiceRole.entities.ResponseCache.update(best.id, { hits: (best.hits || 0) + 1 });
         await recordUsage(base44, keyRecord, internalModel, best.prompt_tokens || 0, best.completion_tokens || 0);
+        requestLog.cache_status = 'semantic_hit';
+        requestLog.status_code = 200;
+        requestLog.response_summary = `Response served from semantic cache`;
+        await writeRequestLog(base44, requestLog);
         const cachedContent = best.content;
         const cachedIn = best.prompt_tokens || 0;
         const cachedOut = best.completion_tokens || 0;
@@ -608,6 +666,11 @@ Deno.serve(async (req) => {
     const msgId = makeId('msg');
 
     if (stream) {
+      requestLog.cache_status = 'miss';
+      requestLog.status_code = 200;
+      requestLog.response_summary = `Generated ${outputTokens} output tokens via stream`;
+      await writeRequestLog(base44, requestLog);
+
       const encoder = new TextEncoder();
       const chars = Array.from(content);
       const chunkSize = Math.max(3, Math.ceil(chars.length / 80));
@@ -640,6 +703,11 @@ Deno.serve(async (req) => {
       });
     }
 
+    requestLog.cache_status = 'miss';
+    requestLog.status_code = 200;
+    requestLog.response_summary = `Generated ${outputTokens} output tokens`;
+    await writeRequestLog(base44, requestLog);
+
     return Response.json({
       id: msgId,
       type: 'message',
@@ -652,6 +720,12 @@ Deno.serve(async (req) => {
     }, { headers: CORS });
 
   } catch (error) {
+    if (base44) {
+      requestLog.cache_status = 'error';
+      requestLog.status_code = 500;
+      requestLog.error_message = error.message;
+      await writeRequestLog(base44, requestLog);
+    }
     return Response.json(
       { type: 'error', error: { type: 'api_error', message: error.message } },
       { status: 500, headers: CORS }

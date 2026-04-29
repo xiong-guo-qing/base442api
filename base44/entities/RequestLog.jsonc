@@ -1,0 +1,92 @@
+{
+  "name": "RequestLog",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "description": "Unique request trace id"
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "API endpoint path"
+    },
+    "method": {
+      "type": "string",
+      "description": "HTTP method"
+    },
+    "model": {
+      "type": "string",
+      "description": "Resolved internal model"
+    },
+    "requested_model": {
+      "type": "string",
+      "description": "Model requested by caller"
+    },
+    "api_key_id": {
+      "type": "string",
+      "description": "API key record id"
+    },
+    "api_key_name": {
+      "type": "string",
+      "description": "Friendly API key name"
+    },
+    "status_code": {
+      "type": "number",
+      "description": "HTTP response status code"
+    },
+    "duration_ms": {
+      "type": "number",
+      "description": "Total processing time in milliseconds"
+    },
+    "cache_status": {
+      "type": "string",
+      "enum": [
+        "hit",
+        "semantic_hit",
+        "miss",
+        "error"
+      ],
+      "description": "Cache result for this request"
+    },
+    "source_ip": {
+      "type": "string",
+      "description": "Caller IP from forwarding headers"
+    },
+    "origin": {
+      "type": "string",
+      "description": "Origin header"
+    },
+    "referer": {
+      "type": "string",
+      "description": "Referer header"
+    },
+    "user_agent": {
+      "type": "string",
+      "description": "User agent header"
+    },
+    "request_params": {
+      "type": "string",
+      "description": "Sanitized request parameters"
+    },
+    "response_summary": {
+      "type": "string",
+      "description": "Short response summary"
+    },
+    "error_message": {
+      "type": "string",
+      "description": "Error message when request failed"
+    },
+    "logged_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the request was logged"
+    }
+  },
+  "required": [
+    "request_id",
+    "endpoint",
+    "status_code",
+    "duration_ms",
+    "logged_at"
+  ]
+}

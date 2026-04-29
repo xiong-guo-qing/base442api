@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, Zap, Key, BarChart2, Shield, Cpu, Database, Flame } from 'lucide-react';
+import { LogOut, Zap, Key, BarChart2, Shield, Cpu, Database, Flame, ListTree } from 'lucide-react';
 import EndpointPanel from './EndpointPanel';
 import ApiKeysTab from './ApiKeysTab';
 import ModelsTab from './ModelsTab';
@@ -7,11 +7,13 @@ import StatsTab from './StatsTab';
 import ChangePassTab from './ChangePassTab';
 import CacheDashboardTab from './CacheDashboardTab';
 import CacheWarmupTab from './CacheWarmupTab';
+import RequestLogsTab from './RequestLogsTab';
 
 const TABS = [
   { id: 'keys', label: 'API Keys', icon: Key },
   { id: 'models', label: '支持模型', icon: Cpu },
   { id: 'stats', label: '使用统计', icon: BarChart2 },
+  { id: 'logs', label: '请求日志', icon: ListTree },
   { id: 'cache', label: '缓存仪表盘', icon: Database },
   { id: 'warmup', label: '缓存预热', icon: Flame },
   { id: 'password', label: '修改密码', icon: Shield },
@@ -72,6 +74,7 @@ export default function Dashboard({ adminToken, onLogout, sha256 }) {
         {activeTab === 'keys' && <ApiKeysTab adminToken={adminToken} />}
         {activeTab === 'models' && <ModelsTab />}
         {activeTab === 'stats' && <StatsTab adminToken={adminToken} />}
+        {activeTab === 'logs' && <RequestLogsTab adminToken={adminToken} />}
         {activeTab === 'cache' && <CacheDashboardTab adminToken={adminToken} />}
         {activeTab === 'warmup' && <CacheWarmupTab adminToken={adminToken} />}
         {activeTab === 'password' && <ChangePassTab adminToken={adminToken} sha256={sha256} onLogout={onLogout} />}
