@@ -394,9 +394,15 @@ Deno.serve(async (req) => {
 
     case 'warmuprun': {
       const { templateId } = body;
+      const headers = { 'Content-Type': 'application/json' };
+      const authorization = req.headers.get('Authorization');
+      const cookie = req.headers.get('Cookie');
+      if (authorization) headers.Authorization = authorization;
+      if (cookie) headers.Cookie = cookie;
+
       const res = await fetch(`${new URL(req.url).origin}/functions/warmupCache`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': req.headers.get('Authorization') || '' },
+        headers,
         body: JSON.stringify(templateId ? { templateId } : {}),
       });
       const json = await res.json();

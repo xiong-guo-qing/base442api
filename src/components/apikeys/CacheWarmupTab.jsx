@@ -137,7 +137,7 @@ export default function CacheWarmupTab({ adminToken }) {
       setMessage({ type: 'success', text: `已处理 ${data.processed} 个模板` });
       load();
     } else {
-      setMessage({ type: 'error', text: data.error || '运行失败' });
+      setMessage({ type: 'error', text: data.error || data.details || '运行失败' });
     }
   };
 
