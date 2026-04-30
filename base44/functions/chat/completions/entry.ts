@@ -73,6 +73,30 @@ async function recordUsage(base44, keyRecord, model, promptTokens = 0, completio
   } catch (_) {}
 }
 
+function getSourceIp(req) {
+  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || '';
+}
+
+function sanitizeParams(body) {
+  const safe = { ...body };
+  if (Array.isArray(safe.messages)) safe.messages = safe.messages.slice(-6);
+  const text = JSON.stringify(safe, null, 2);
+  return text.length > 6000 ? text.slice(0, 6000) + '\n...已截断' : text;
+}
+
+async function writeRequestLog(base44, data) {
+  try {
+    await base44.asServiceRole.entities.RequestLog.create({
+      ...data,
+      duration_ms: Date.now() - data.started_at,
+      logged_at: new Date().toISOString(),
+      started_at: undefined,
+    });
+  } catch (err) {
+    console.error('[requestLog] write failed:', err.message);
+  }
+}
+
 const EMBED_DIM = 256;
 const STOPWORDS = new Set(['the','a','an','is','are','was','were','of','to','in','on','at','for','and','or','but','i','you','it','this','that','please','can','could','would','will','do','does','did','have','has','had','be','been','am','my','your','我','你','的','了','是','吗','啊','请','帮','给','把','一','在','和','或','也','都','就','要','不','没','有','吧']);
 function embedText(text) {
@@ -168,8 +192,23 @@ const TOOL_RESPONSE_SCHEMA = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
+  const startedAt = Date.now();
+  let base44;
+  let requestLog = {
+    request_id: makeId('req'),
+    endpoint: '/chat/completions',
+    method: req.method,
+    source_ip: getSourceIp(req),
+    origin: req.headers.get('origin') || '',
+    referer: req.headers.get('referer') || '',
+    user_agent: req.headers.get('user-agent') || '',
+    status_code: 500,
+    cache_status: 'miss',
+    started_at: startedAt,
+  };
+
   try {
-    const base44 = createInternalClient(req);
+    base44 = createInternalClient(req);
     const authHeader = req.headers.get('Authorization') || '';
     const apiKey = authHeader.replace('Bearer ', '').trim();
 
@@ -185,6 +224,9 @@ Deno.serve(async (req) => {
     const keyRecord = keys[0];
 
     const body = await req.json();
+    requestLog.api_key_id = keyRecord.id;
+    requestLog.api_key_name = keyRecord.name || '';
+    requestLog.request_params = sanitizeParams(body);
     const {
       model: requestedModel = 'automatic',
       messages = [],
@@ -212,6 +254,11 @@ Deno.serve(async (req) => {
     if (searchSuffix) modelKey = modelKey.replace(/-search$/, '').replace(/:online$/, '');
 
     let internalModel = MODEL_MAP[modelKey] || MODEL_MAP[requestedModel] || 'gpt_5_mini';
+    requestLog.requested_model = requestedModel;
+    requestLog.model = internalModel;
+    requestLog.status_code = 200;
+    requestLog.response_summary = 'Chat completion request received';
+    await writeRequestLog(base44, requestLog);
 
     // --- Deep thinking detection ---
     const effortRaw = reasoning_effort || reasoning?.effort;
@@ -622,6 +669,12 @@ Deno.serve(async (req) => {
     }, { headers: CORS });
 
   } catch (error) {
+    if (base44) {
+      requestLog.cache_status = 'error';
+      requestLog.status_code = 500;
+      requestLog.error_message = error.message;
+      await writeRequestLog(base44, requestLog);
+    }
     return Response.json({ error: { message: error.message, type: 'server_error' } }, { status: 500, headers: CORS });
   }
 });
