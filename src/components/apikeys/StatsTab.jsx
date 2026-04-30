@@ -43,7 +43,7 @@ export default function StatsTab({ adminToken }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs text-slate-500 mb-1">总请求数</div>
-          <div className="text-2xl font-bold text-slate-100">{stats.length}</div>
+          <div className="text-2xl font-bold text-slate-100">{stats.length.toLocaleString()}</div>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs text-slate-500 mb-1">总 Token</div>

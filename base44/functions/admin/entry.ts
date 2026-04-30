@@ -115,15 +115,15 @@ Deno.serve(async (req) => {
     }
 
     case 'stats': {
-      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 200);
+      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 5000);
       return jsonRes({ stats });
     }
 
     case 'requestlogs': {
-      const logs = await base44.asServiceRole.entities.RequestLog.list('-created_date', 200);
+      const logs = await base44.asServiceRole.entities.RequestLog.list('-created_date', 5000);
       if (logs.length > 0) return jsonRes({ logs });
 
-      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 200);
+      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 5000);
       const keys = await base44.asServiceRole.entities.APIKey.list('-created_date', 200);
       const keyMap = Object.fromEntries(keys.map(k => [k.id, k.name || (k.key ? `${k.key.slice(0, 8)}...` : '')]));
       const fallbackLogs = stats.map(s => ({
