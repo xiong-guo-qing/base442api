@@ -6,7 +6,6 @@ import CacheFilterClear from './CacheFilterClear';
 import CacheTrendsCharts from './CacheTrendsCharts';
 import CacheDetailDrawer from './CacheDetailDrawer';
 import SemanticClustersView from './SemanticClustersView';
-import CacheWarmupTab from './CacheWarmupTab';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
 
@@ -123,9 +122,6 @@ export default function CacheDashboardTab({ adminToken }) {
 
       {/* Trends charts */}
       <CacheTrendsCharts adminToken={adminToken} />
-
-      {/* Cache warmup */}
-      <CacheWarmupTab adminToken={adminToken} />
 
       {/* Semantic clustering */}
       <SemanticClustersView />
