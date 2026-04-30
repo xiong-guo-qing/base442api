@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 import { RefreshCw, Trash2 } from 'lucide-react';
+import PaginationControls from './PaginationControls';
 
 export default function StatsTab({ adminToken }) {
   const [stats, setStats] = useState([]);
   const [cacheStats, setCacheStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -16,6 +18,7 @@ export default function StatsTab({ adminToken }) {
     ]);
     setStats(statsRes.data?.stats || []);
     setCacheStats(cacheRes.data || null);
+    setCurrentPage(1);
     setLoading(false);
   }, [adminToken]);
 
@@ -30,6 +33,9 @@ export default function StatsTab({ adminToken }) {
   };
 
   const totalTokens = stats.reduce((s, r) => s + (r.total_tokens || 0), 0);
+  const pageSize = 20;
+  const totalPages = Math.max(1, Math.ceil(stats.length / pageSize));
+  const paginatedStats = stats.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6">
@@ -92,7 +98,7 @@ export default function StatsTab({ adminToken }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {stats.map(r => (
+                {paginatedStats.map(r => (
                   <tr key={r.id} className="hover:bg-slate-800/30 transition-colors">
                     <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                       {r.timestamp ? new Date(r.timestamp).toLocaleString('zh-CN') : '-'}
@@ -109,6 +115,15 @@ export default function StatsTab({ adminToken }) {
             </table>
           )}
         </div>
+        {!loading && stats.length > 0 && (
+          <PaginationControls
+            page={currentPage}
+            totalPages={totalPages}
+            totalItems={stats.length}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+          />
+        )}
       </div>
     </div>
   );

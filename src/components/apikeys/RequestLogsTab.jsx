@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { RefreshCw, Search, Clock, ExternalLink } from 'lucide-react';
 import StreamEventsViewer from './StreamEventsViewer';
+import PaginationControls from './PaginationControls';
 
 function StatusBadge({ code }) {
   const ok = code >= 200 && code < 300;
@@ -19,11 +20,13 @@ export default function RequestLogsTab({ adminToken }) {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [query, setQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
 
   const load = async () => {
     setLoading(true);
     const res = await base44.functions.invoke('admin', { action: 'requestlogs', adminToken });
     setLogs(res.data?.logs || []);
+    setCurrentPage(1);
     setLoading(false);
   };
 
@@ -33,6 +36,9 @@ export default function RequestLogsTab({ adminToken }) {
     const text = `${log.request_id || ''} ${log.endpoint || ''} ${log.model || ''} ${log.api_key_name || ''} ${log.source_ip || ''}`.toLowerCase();
     return text.includes(query.toLowerCase());
   });
+  const pageSize = 20;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedLogs = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-4">
@@ -48,7 +54,7 @@ export default function RequestLogsTab({ adminToken }) {
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索请求 ID、模型、来源 IP 或 API Key..." className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-blue-500" />
+        <input value={query} onChange={e => { setQuery(e.target.value); setCurrentPage(1); }} placeholder="搜索请求 ID、模型、来源 IP 或 API Key..." className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-blue-500" />
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
@@ -59,7 +65,7 @@ export default function RequestLogsTab({ adminToken }) {
                 <th className="text-left px-4 py-3 text-slate-400 font-medium">时间</th><th className="text-left px-4 py-3 text-slate-400 font-medium">来源</th><th className="text-left px-4 py-3 text-slate-400 font-medium">接口 / 模型</th><th className="text-center px-4 py-3 text-slate-400 font-medium">状态</th><th className="text-right px-4 py-3 text-slate-400 font-medium">耗时</th><th className="text-center px-4 py-3 text-slate-400 font-medium">缓存</th><th className="text-right px-4 py-3 text-slate-400 font-medium">详情</th>
               </tr></thead>
               <tbody className="divide-y divide-slate-800">
-                {filtered.map(log => <tr key={log.id} className="hover:bg-slate-800/30">
+                {paginatedLogs.map(log => <tr key={log.id} className="hover:bg-slate-800/30">
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{log.logged_at ? new Date(log.logged_at).toLocaleString('zh-CN') : '-'}</td>
                   <td className="px-4 py-3"><div className="text-slate-300 text-xs font-mono">{log.source_ip || '-'}</div><div className="text-slate-500 text-xs truncate max-w-[180px]">{log.api_key_name || log.api_key_id || '-'}</div></td>
                   <td className="px-4 py-3"><div className="text-slate-300 text-xs">{log.endpoint}</div><code className="text-blue-300 text-xs font-mono">{log.model || log.requested_model || '-'}</code></td>
@@ -71,6 +77,15 @@ export default function RequestLogsTab({ adminToken }) {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && filtered.length > 0 && (
+          <PaginationControls
+            page={currentPage}
+            totalPages={totalPages}
+            totalItems={filtered.length}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+          />
         )}
       </div>
 
