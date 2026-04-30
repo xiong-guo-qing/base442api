@@ -8,8 +8,8 @@ const CORS = {
 
 function createInternalClient(req) {
   const headers = new Headers(req.headers);
-  headers.delete('Authorization');
-  headers.delete('x-api-key');
+  const apiKey = headers.get('x-api-key') || (headers.get('Authorization') || '').replace('Bearer ', '').trim();
+  headers.set('x-api-key', apiKey || '');
   return createClientFromRequest(new Request(req.url, { method: req.method, headers }));
 }
 

@@ -121,7 +121,32 @@ Deno.serve(async (req) => {
 
     case 'requestlogs': {
       const logs = await base44.asServiceRole.entities.RequestLog.list('-created_date', 200);
-      return jsonRes({ logs });
+      if (logs.length > 0) return jsonRes({ logs });
+
+      const stats = await base44.asServiceRole.entities.UsageStats.list('-created_date', 200);
+      const keys = await base44.asServiceRole.entities.APIKey.list('-created_date', 200);
+      const keyMap = Object.fromEntries(keys.map(k => [k.id, k.name || (k.key ? `${k.key.slice(0, 8)}...` : '')]));
+      const fallbackLogs = stats.map(s => ({
+        id: s.id,
+        request_id: `usage_${s.id}`,
+        endpoint: '/v1/messages',
+        method: 'POST',
+        model: s.model,
+        requested_model: s.model,
+        api_key_id: s.api_key_id,
+        api_key_name: keyMap[s.api_key_id] || s.api_key_id || '',
+        status_code: 200,
+        duration_ms: 0,
+        cache_status: 'miss',
+        source_ip: '',
+        origin: '',
+        referer: '',
+        user_agent: '',
+        request_params: `Prompt tokens: ${s.prompt_tokens || 0}\nCompletion tokens: ${s.completion_tokens || 0}\nTotal tokens: ${s.total_tokens || 0}`,
+        response_summary: '由使用统计生成的请求记录',
+        logged_at: s.timestamp || s.created_date,
+      }));
+      return jsonRes({ logs: fallbackLogs });
     }
 
     case 'changepass': {
