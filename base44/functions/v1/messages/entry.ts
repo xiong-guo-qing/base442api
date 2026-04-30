@@ -52,6 +52,33 @@ function sanitizeParams(body) {
   return text.length > 6000 ? text.slice(0, 6000) + '\n...已截断' : text;
 }
 
+function buildStreamTrace(chunks, meta = {}) {
+  const events = [];
+  let text = '';
+  const push = (event, data) => {
+    const item = { event, type: data.type, data };
+    const deltaText = data.delta?.text || '';
+    if (deltaText) {
+      item.text = deltaText;
+      text += deltaText;
+    }
+    events.push(item);
+  };
+  push('message_start', { type: 'message_start', message: meta.message || {} });
+  push('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  push('ping', { type: 'ping' });
+  chunks.forEach(chunk => push('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } }));
+  push('content_block_stop', { type: 'content_block_stop', index: 0 });
+  push('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: meta.usage || {} });
+  push('message_stop', { type: 'message_stop' });
+  return {
+    stream_events: JSON.stringify(events).slice(0, 18000),
+    stream_text: text.slice(0, 12000),
+    stream_event_count: events.length,
+    is_stream: true,
+  };
+}
+
 async function writeRequestLog(base44, data) {
   try {
     await base44.asServiceRole.entities.RequestLog.create({
@@ -509,7 +536,6 @@ Deno.serve(async (req) => {
         requestLog.cache_status = 'hit';
         requestLog.status_code = 200;
         requestLog.response_summary = 'Response served from exact cache';
-        await writeRequestLog(base44, requestLog);
         const cachedContent = entry.content;
         const cachedIn = entry.prompt_tokens || 0;
         const cachedOut = entry.completion_tokens || 0;
@@ -519,12 +545,18 @@ Deno.serve(async (req) => {
           const encoder = new TextEncoder();
           const chars = Array.from(cachedContent);
           const chunkSize = Math.max(5, Math.ceil(chars.length / 20));
+          const chunks = [];
+          for (let i = 0; i < chars.length; i += chunkSize) chunks.push(chars.slice(i, i + chunkSize).join(''));
+          Object.assign(requestLog, buildStreamTrace(chunks, {
+            message: { id: cMsgId, type: 'message', role: 'assistant', content: [], model: requestedModel },
+            usage: { input_tokens: cachedIn, output_tokens: cachedOut, total_tokens: cachedIn + cachedOut }
+          }));
+          await writeRequestLog(base44, requestLog);
           const readable = new ReadableStream({
             async start(controller) {
               controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: cMsgId, type: 'message', role: 'assistant', content: [], model: requestedModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: cachedIn, output_tokens: 0 } } })}\n\n`));
               controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n`));
-              for (let i = 0; i < chars.length; i += chunkSize) {
-                const chunk = chars.slice(i, i + chunkSize).join('');
+              for (const chunk of chunks) {
                 controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } })}\n\n`));
                 await new Promise(r => setTimeout(r, 25));
               }
@@ -537,6 +569,7 @@ Deno.serve(async (req) => {
           return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
         }
 
+        await writeRequestLog(base44, requestLog);
         return Response.json({
           id: cMsgId, type: 'message', role: 'assistant',
           content: [{ type: 'text', text: cachedContent }],
@@ -569,7 +602,6 @@ Deno.serve(async (req) => {
         requestLog.cache_status = 'semantic_hit';
         requestLog.status_code = 200;
         requestLog.response_summary = `Response served from semantic cache`;
-        await writeRequestLog(base44, requestLog);
         const cachedContent = best.content;
         const cachedIn = best.prompt_tokens || 0;
         const cachedOut = best.completion_tokens || 0;
@@ -578,12 +610,18 @@ Deno.serve(async (req) => {
           const encoder = new TextEncoder();
           const chars = Array.from(cachedContent);
           const chunkSize = Math.max(5, Math.ceil(chars.length / 20));
+          const chunks = [];
+          for (let i = 0; i < chars.length; i += chunkSize) chunks.push(chars.slice(i, i + chunkSize).join(''));
+          Object.assign(requestLog, buildStreamTrace(chunks, {
+            message: { id: sMsgId, type: 'message', role: 'assistant', content: [], model: requestedModel },
+            usage: { input_tokens: cachedIn, output_tokens: cachedOut, total_tokens: cachedIn + cachedOut }
+          }));
+          await writeRequestLog(base44, requestLog);
           const readable = new ReadableStream({
             async start(controller) {
               controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: sMsgId, type: 'message', role: 'assistant', content: [], model: requestedModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: cachedIn, output_tokens: 0 } } })}\n\n`));
               controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n`));
-              for (let i = 0; i < chars.length; i += chunkSize) {
-                const chunk = chars.slice(i, i + chunkSize).join('');
+              for (const chunk of chunks) {
                 controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } })}\n\n`));
                 await new Promise(r => setTimeout(r, 20));
               }
@@ -595,6 +633,7 @@ Deno.serve(async (req) => {
           });
           return new Response(readable, { headers: { ...CORS, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
         }
+        await writeRequestLog(base44, requestLog);
         return Response.json({
           id: sMsgId, type: 'message', role: 'assistant',
           content: [{ type: 'text', text: cachedContent }],
@@ -669,11 +708,17 @@ Deno.serve(async (req) => {
       requestLog.cache_status = 'miss';
       requestLog.status_code = 200;
       requestLog.response_summary = `Generated ${outputTokens} output tokens via stream`;
-      await writeRequestLog(base44, requestLog);
 
       const encoder = new TextEncoder();
       const chars = Array.from(content);
       const chunkSize = Math.max(3, Math.ceil(chars.length / 80));
+      const chunks = [];
+      for (let i = 0; i < chars.length; i += chunkSize) chunks.push(chars.slice(i, i + chunkSize).join(''));
+      Object.assign(requestLog, buildStreamTrace(chunks, {
+        message: { id: msgId, type: 'message', role: 'assistant', content: [], model: requestedModel },
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: inputTokens + outputTokens }
+      }));
+      await writeRequestLog(base44, requestLog);
 
       const readable = new ReadableStream({
         async start(controller) {
@@ -685,8 +730,7 @@ Deno.serve(async (req) => {
           controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n`));
           controller.enqueue(encoder.encode(`event: ping\ndata: ${JSON.stringify({ type: 'ping' })}\n\n`));
 
-          for (let i = 0; i < chars.length; i += chunkSize) {
-            const chunk = chars.slice(i, i + chunkSize).join('');
+          for (const chunk of chunks) {
             controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: chunk } })}\n\n`));
             await new Promise(r => setTimeout(r, 10));
           }

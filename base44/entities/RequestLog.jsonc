@@ -76,6 +76,24 @@
       "type": "string",
       "description": "Error message when request failed"
     },
+    "is_stream": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this request used streaming response"
+    },
+    "stream_events": {
+      "type": "string",
+      "description": "Parsed stream event packets as compact JSON"
+    },
+    "stream_text": {
+      "type": "string",
+      "description": "Accumulated streamed text output"
+    },
+    "stream_event_count": {
+      "type": "number",
+      "default": 0,
+      "description": "Number of captured stream packets"
+    },
     "logged_at": {
       "type": "string",
       "format": "date-time",

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { RefreshCw, Search, Clock, ExternalLink } from 'lucide-react';
+import StreamEventsViewer from './StreamEventsViewer';
 
 function StatusBadge({ code }) {
   const ok = code >= 200 && code < 300;
@@ -85,6 +86,7 @@ export default function RequestLogsTab({ adminToken }) {
           <div className="space-y-4">
             <div><div className="text-sm font-medium text-slate-300 mb-2">请求参数</div><pre className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 whitespace-pre-wrap overflow-auto max-h-80">{selected.request_params || '-'}</pre></div>
             <div><div className="text-sm font-medium text-slate-300 mb-2">响应摘要 / 错误</div><pre className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 whitespace-pre-wrap">{selected.error_message || selected.response_summary || '-'}</pre></div>
+            <StreamEventsViewer log={selected} />
             <div><div className="text-sm font-medium text-slate-300 mb-2">来源页面</div><pre className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 whitespace-pre-wrap break-all">Origin: {selected.origin || '-'}\nReferer: {selected.referer || '-'}</pre></div>
           </div>
         </div>
